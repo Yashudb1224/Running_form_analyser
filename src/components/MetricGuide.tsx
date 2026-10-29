@@ -1,4 +1,10 @@
 import React from "react";
+import { REFERENCE_RANGES } from "@/lib/researchReferences";
+
+/** Every source behind the reference ranges, listed once each. */
+const references = Array.from(
+  new Map(Object.values(REFERENCE_RANGES).flatMap((range) => range.citations).map((citation) => [citation.short, citation.full])).values()
+);
 
 const definitions = [
   {
@@ -50,5 +56,15 @@ export const MetricGuide: React.FC = () => (
         </div>
       ))}
     </dl>
+
+    <div className="panel px-5 py-4">
+      <h3 className="text-sm font-semibold text-ink">Research references</h3>
+      <p className="mt-1 text-xs text-muted">Sources for the typical ranges used in the summary.</p>
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-relaxed text-body">
+        {references.map((reference) => (
+          <li key={reference}>{reference}</li>
+        ))}
+      </ol>
+    </div>
   </section>
 );
