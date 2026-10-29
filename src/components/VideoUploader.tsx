@@ -36,7 +36,7 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected })
         <input
           ref={inputRef}
           type="file"
-          accept="video/mp4,video/mov,video/avi,video/webm"
+          accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
           className="hidden"
           onChange={handleFileChange}
         />
@@ -54,18 +54,21 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected })
 
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-card border border-border text-xs font-semibold text-slate-300">
           <Video className="w-4 h-4 text-primary" />
-          <span>Recommended: 10–30s video at 30–60 FPS</span>
+          <span>Recommended: 10–30s video; browser analysis samples at 10 FPS</span>
         </div>
       </div>
 
       <div className="mt-6 flex items-center justify-center gap-6 text-xs text-slate-400">
         <span className="flex items-center gap-1.5">
-          <ShieldCheck className="w-4 h-4 text-success" /> 100% In-Browser Local Processing
+          <ShieldCheck className="w-4 h-4 text-success" /> Video frames are processed in this browser; the app does not upload them
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-primary inline-block"></span> WebGL Pose Acceleration
+          <span className="w-2 h-2 rounded-full bg-primary inline-block"></span> MediaPipe Pose tracking
         </span>
       </div>
+      <p className="text-[11px] text-slate-500 text-center mt-3 max-w-2xl mx-auto">
+        MediaPipe scripts and model assets are loaded from jsDelivr; the interface font is requested from Google Fonts. Those third-party asset requests may occur, but video frames are not sent to an external analysis API.
+      </p>
     </div>
   );
 };

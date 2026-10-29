@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI Running Form & Performance Analyzer",
-  description: "Markerless Computer Vision Pose Estimation & Biomechanical Telemetry Dashboard",
+  description: "Browser-side pose tracking and exploratory running-form telemetry dashboard",
 };
 
 export default function RootLayout({

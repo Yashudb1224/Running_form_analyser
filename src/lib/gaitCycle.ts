@@ -1,161 +1,180 @@
-import { FramePose, GaitMetrics, KinematicSequence } from "@/types/telemetry";
+import { FramePose, GaitMetrics, KinematicSequence, Landmark, metric, unavailableMetric } from "../types/telemetry";
 import { smoothArray } from "./signalProcessor";
 
-/**
- * Finds local peak indices in a 1D array.
- */
-export function findPeaks(data: number[], distance: number = 8, prominence: number = 0.02): number[] {
+const MIN_VISIBILITY = 0.5;
+
+function validPoint(point: Landmark | null | undefined): point is Landmark {
+  return Boolean(point && point.visibility !== null && point.visibility >= MIN_VISIBILITY);
+}
+
+function finiteValues(values: (number | null)[]): number[] {
+  return values.filter((value): value is number => value !== null && Number.isFinite(value));
+}
+
+export function findPeaks(
+  data: (number | null)[],
+  timestamps: number[],
+  minimumSeparationSec: number,
+  prominence: number
+): number[] {
   const peaks: number[] = [];
-  const n = data.length;
+  let lastPeakTime = -Infinity;
 
-  for (let i = 1; i < n - 1; i++) {
-    if (data[i] > data[i - 1] && data[i] > data[i + 1]) {
-      const prevPeak = peaks.length > 0 ? peaks[peaks.length - 1] : -distance;
-      if (i - prevPeak >= distance) {
-        const leftMin = Math.min(...data.slice(Math.max(0, i - distance), i));
-        const rightMin = Math.min(...data.slice(i + 1, Math.min(n, i + distance + 1)));
-        const prom = data[i] - Math.max(leftMin, rightMin);
-
-        if (prom >= prominence) {
-          peaks.push(i);
-        }
-      }
+  for (let index = 1; index < data.length - 1; index++) {
+    const value = data[index];
+    if (value === null || !Number.isFinite(value)) continue;
+    let plateauEnd = index;
+    while (plateauEnd + 1 < data.length && data[plateauEnd + 1] === value) plateauEnd++;
+    const before = data[index - 1];
+    const after = data[plateauEnd + 1];
+    const peakIndex = Math.floor((index + plateauEnd) / 2);
+    const time = timestamps[peakIndex];
+    if (
+      typeof before !== "number" ||
+      typeof after !== "number" ||
+      !Number.isFinite(value) ||
+      !Number.isFinite(time) ||
+      value <= before ||
+      value <= after ||
+      time - lastPeakTime < minimumSeparationSec
+    ) {
+      index = plateauEnd;
+      continue;
     }
-  }
 
+    const windowStart = Math.max(0, peakIndex - 3);
+    const windowEnd = Math.min(data.length, peakIndex + 4);
+    const neighborhood = finiteValues(data.slice(windowStart, windowEnd));
+    if (neighborhood.length < 3) {
+      index = plateauEnd;
+      continue;
+    }
+    const localMinimum = Math.min(...neighborhood);
+    if (value - localMinimum >= prominence) {
+      peaks.push(peakIndex);
+      lastPeakTime = time;
+    }
+    index = plateauEnd;
+  }
   return peaks;
 }
 
-/**
- * Analyzes gait cycle, foot strike events, cadence, GCT, vertical oscillation, and overstriding.
- */
-export function analyzeGaitCycles(
-  timestamps: number[],
-  leftAnkleY: number[],
-  rightAnkleY: number[],
-  kinematics?: KinematicSequence,
-  frames?: FramePose[],
-  fps: number = 30.0
-): GaitMetrics {
-  const n = timestamps.length;
-  if (n === 0) {
-    return {
-      cadenceSpm: 170.0,
-      avgStepTimeSec: 0.35,
-      groundContactTimeMs: 220,
-      flightTimeMs: 130,
-      dutyFactorPct: 62.8,
-      verticalOscillationCm: 7.5,
-      overstrideDistanceCm: 6.2,
-      pelvicDropMaxDeg: 3.5,
-      stepTimeCvPct: 3.5,
-      stancePct: 60.0,
-      swingPct: 40.0,
-      leftContacts: [],
-      rightContacts: []
-    };
-  }
-
-  const smoothLeftY = smoothArray(leftAnkleY, 7);
-  const smoothRightY = smoothArray(rightAnkleY, 7);
-
-  // Peak Y in screen coordinates corresponds to lowest foot position (Initial Contact)
-  const minDist = Math.max(5, Math.floor(fps * 0.25)); // Min ~250ms between foot strikes of same leg
-  const leftContacts = findPeaks(smoothLeftY, minDist, 2.0);
-  const rightContacts = findPeaks(smoothRightY, minDist, 2.0);
-
-  // Combine and sort all contact timestamps
-  const allContacts: { frame: number; time: number; leg: "left" | "right" }[] = [];
-  leftContacts.forEach(f => allContacts.push({ frame: f, time: timestamps[f] || (f / fps), leg: "left" }));
-  rightContacts.forEach(f => allContacts.push({ frame: f, time: timestamps[f] || (f / fps), leg: "right" }));
-
-  allContacts.sort((a, b) => a.time - b.time);
-
-  // Calculate step durations
-  const stepDurations: number[] = [];
-  for (let i = 1; i < allContacts.length; i++) {
-    const diff = allContacts[i].time - allContacts[i - 1].time;
-    if (diff >= 0.2 && diff <= 0.8) {
-      stepDurations.push(diff);
-    }
-  }
-
-  let avgStepTime = 0.35;
-  let cadenceSpm = 170.0;
-  let cvPct = 3.5;
-
-  if (stepDurations.length > 0) {
-    avgStepTime = stepDurations.reduce((a, b) => a + b, 0) / stepDurations.length;
-    cadenceSpm = Math.round(60.0 / avgStepTime);
-
-    const variance = stepDurations.reduce((sum, d) => sum + Math.pow(d - avgStepTime, 2), 0) / stepDurations.length;
-    const stdDev = Math.sqrt(variance);
-    cvPct = Math.round(((stdDev / avgStepTime) * 100) * 10) / 10;
-  }
-
-  cadenceSpm = Math.max(120, Math.min(220, cadenceSpm));
-
-  // Advanced Biomechanics Metrics Calculation:
-  // 1. Ground Contact Time (GCT) & Flight Time
-  const dutyFactorRatio = Math.max(0.52, Math.min(0.70, 0.65 - (cadenceSpm - 160) * 0.002));
-  const groundContactTimeMs = Math.round(avgStepTime * 1000 * dutyFactorRatio);
-  const flightTimeMs = Math.max(30, Math.round(avgStepTime * 1000 - groundContactTimeMs));
-  const dutyFactorPct = Math.round((groundContactTimeMs / (groundContactTimeMs + flightTimeMs)) * 1000) / 10;
-
-  // 2. Vertical Oscillation (Pelvis displacement)
-  let verticalOscillationCm = 7.5;
-  if (kinematics && kinematics.pelvisCenterY && kinematics.pelvisCenterY.length > 0) {
-    const minY = Math.min(...kinematics.pelvisCenterY);
-    const maxY = Math.max(...kinematics.pelvisCenterY);
-    const rangePx = maxY - minY;
-    // Scale pixel displacement to cm (assuming typical torso height calibration)
-    verticalOscillationCm = Math.round(Math.max(4.0, Math.min(14.0, rangePx * 0.08 + 5.0)) * 10) / 10;
-  }
-
-  // 3. Overstride Brake Distance
-  let overstrideDistanceCm = 6.5;
-  if (frames && allContacts.length > 0) {
-    let sumOverstride = 0;
-    let count = 0;
-    for (const contact of allContacts) {
-      const frame = frames[contact.frame];
-      if (frame && frame.landmarks) {
-        const lm = frame.landmarks;
-        const ankleIdx = contact.leg === "left" ? 27 : 28;
-        const hipIdx = contact.leg === "left" ? 23 : 24;
-        if (lm[ankleIdx] && lm[hipIdx] && lm[ankleIdx].visibility > 0.3) {
-          const dxPx = Math.abs(lm[ankleIdx].x - lm[hipIdx].x);
-          sumOverstride += dxPx;
-          count++;
-        }
-      }
-    }
-    if (count > 0) {
-      const avgPx = sumOverstride / count;
-      overstrideDistanceCm = Math.round(Math.max(2.0, Math.min(18.0, avgPx * 0.12)) * 10) / 10;
-    }
-  }
-
-  // 4. Max Pelvic Drop (Hip Drop Angle)
-  let pelvicDropMaxDeg = 3.8;
-  if (kinematics && kinematics.pelvicTiltAngles && kinematics.pelvicTiltAngles.length > 0) {
-    pelvicDropMaxDeg = Math.round(Math.max(...kinematics.pelvicTiltAngles) * 10) / 10;
-  }
-
+function emptyGaitMetrics(reason: string): GaitMetrics {
   return {
-    cadenceSpm,
-    avgStepTimeSec: Math.round(avgStepTime * 100) / 100,
-    groundContactTimeMs,
-    flightTimeMs,
-    dutyFactorPct,
-    verticalOscillationCm,
-    overstrideDistanceCm,
-    pelvicDropMaxDeg,
-    stepTimeCvPct: Math.min(15.0, cvPct),
-    stancePct: Math.round(dutyFactorPct),
-    swingPct: Math.round((100 - dutyFactorPct) * 10) / 10,
-    leftContacts,
-    rightContacts
+    cadenceSpm: unavailableMetric("steps/min", reason),
+    avgStepTimeSec: unavailableMetric("s", reason),
+    groundContactTimeMs: unavailableMetric("ms", "Not directly measured by this video method."),
+    flightTimeMs: unavailableMetric("ms", "Not directly measured by this video method."),
+    dutyFactorPct: unavailableMetric("%", "Requires measured contact and flight events."),
+    pelvisVerticalRangeBodyHeightPct: unavailableMetric("% body height", reason),
+    ankleHipOffsetBodyHeightPct: unavailableMetric("% body height", reason),
+    maxHipLineImageTiltDeg: unavailableMetric("deg", reason),
+    stepTimeCvPct: unavailableMetric("%", reason),
+    stancePct: unavailableMetric("%", "Contact/flight phase duration is not measured."),
+    swingPct: unavailableMetric("%", "Contact/flight phase duration is not measured."),
+    leftContacts: [],
+    rightContacts: [],
   };
 }
 
+export function analyzeGaitCycles(
+  timestamps: number[],
+  leftAnkleY: (number | null)[],
+  rightAnkleY: (number | null)[],
+  kinematics: KinematicSequence,
+  frames: FramePose[]
+): GaitMetrics {
+  const validAnkleY = [...finiteValues(leftAnkleY), ...finiteValues(rightAnkleY)];
+  if (timestamps.length < 3 || validAnkleY.length < 6) {
+    return emptyGaitMetrics("Insufficient valid ankle tracking to estimate this metric.");
+  }
+
+  const range = Math.max(...validAnkleY) - Math.min(...validAnkleY);
+  if (!Number.isFinite(range) || range <= 0) {
+    return emptyGaitMetrics("Ankle trajectory has no usable vertical range.");
+  }
+
+  const prominence = Math.max(1, range * 0.08);
+  const leftSmooth = smoothArray(leftAnkleY, 3);
+  const rightSmooth = smoothArray(rightAnkleY, 3);
+  const leftContacts = findPeaks(leftSmooth, timestamps, 0.25, prominence);
+  const rightContacts = findPeaks(rightSmooth, timestamps, 0.25, prominence);
+  const allContacts = [
+    ...leftContacts.map((frame) => ({ frame, time: timestamps[frame], leg: "left" as const })),
+    ...rightContacts.map((frame) => ({ frame, time: timestamps[frame], leg: "right" as const })),
+  ].sort((a, b) => a.time - b.time);
+
+  const validDurations: number[] = [];
+  for (let index = 1; index < allContacts.length; index++) {
+    const previous = allContacts[index - 1];
+    const current = allContacts[index];
+    const duration = current.time - previous.time;
+    if (previous.leg !== current.leg && Number.isFinite(duration) && duration > 0) validDurations.push(duration);
+  }
+  const reason = validDurations.length < 2
+    ? "At least three alternating left/right ankle events are needed for a cadence estimate."
+    : "";
+  const hasCadence = !reason;
+  const meanStepTime = hasCadence
+    ? validDurations.reduce((sum, duration) => sum + duration, 0) / validDurations.length
+    : null;
+  const elapsed = validDurations.reduce((sum, duration) => sum + duration, 0);
+  const cadence = hasCadence && elapsed > 0 ? (validDurations.length / elapsed) * 60 : null;
+  const variance = meanStepTime === null
+    ? null
+    : validDurations.reduce((sum, duration) => sum + (duration - meanStepTime) ** 2, 0) / validDurations.length;
+  const stepCv = variance !== null && meanStepTime
+    ? (Math.sqrt(variance) / meanStepTime) * 100
+    : null;
+
+  const pelvis = finiteValues(kinematics.pelvisCenterY);
+  const torso = finiteValues(kinematics.torsoHeightPx);
+  const verticalOscillation = pelvis.length > 1 && torso.length > 0
+    ? ((Math.max(...pelvis) - Math.min(...pelvis)) / (torso.reduce((sum, value) => sum + value, 0) / torso.length)) * 100
+    : null;
+
+  const offsets: number[] = [];
+  for (const contact of allContacts) {
+    const frame = frames[contact.frame];
+    const ankleIndex = contact.leg === "left" ? 27 : 28;
+    const hipIndex = contact.leg === "left" ? 23 : 24;
+    const ankle = frame?.landmarks[ankleIndex];
+    const hip = frame?.landmarks[hipIndex];
+    const torsoHeight = kinematics.torsoHeightPx[contact.frame];
+    if (validPoint(ankle) && validPoint(hip) && torsoHeight && torsoHeight > 0) {
+      offsets.push((Math.abs(ankle.x - hip.x) / torsoHeight) * 100);
+    }
+  }
+
+  const pelvicValues = finiteValues(kinematics.hipLineImageTiltAngles);
+  return {
+    cadenceSpm: metric(cadence === null ? null : Math.round(cadence * 10) / 10, "algorithmically-estimated", "steps/min", "Estimated from alternating left/right peaks in tracked ankle vertical trajectories; not a direct sensor measurement."),
+    avgStepTimeSec: metric(meanStepTime, "algorithmically-estimated", "s", "Mean interval between alternating left/right ankle trajectory events."),
+    groundContactTimeMs: unavailableMetric("ms", "Video sampling and 2D landmarks do not directly identify foot-ground contact."),
+    flightTimeMs: unavailableMetric("ms", "Video sampling and 2D landmarks do not directly identify foot-ground contact."),
+    dutyFactorPct: unavailableMetric("%", "Not calculated because contact and flight durations are unavailable."),
+    pelvisVerticalRangeBodyHeightPct: metric(
+      verticalOscillation === null ? null : Math.round(verticalOscillation * 10) / 10,
+      "heuristic-estimate",
+      "% body height",
+      "Image-space pelvis vertical range divided by mean shoulder-to-hip pixel distance; uncalibrated."
+    ),
+    ankleHipOffsetBodyHeightPct: metric(
+      offsets.length ? Math.round((offsets.reduce((sum, value) => sum + value, 0) / offsets.length) * 10) / 10 : null,
+      "heuristic-estimate",
+      "% body height",
+      "Mean absolute horizontal ankle-to-hip offset at detected events, normalized by torso pixel height; camera direction and physical scale are unknown."
+    ),
+    maxHipLineImageTiltDeg: metric(
+      pelvicValues.length ? Math.round(Math.max(...pelvicValues) * 10) / 10 : null,
+      "landmark-derived",
+      "deg",
+      "Maximum absolute image-plane angle of the line joining the two tracked hip landmarks."
+    ),
+    stepTimeCvPct: metric(stepCv === null ? null : Math.round(stepCv * 10) / 10, "algorithmically-estimated", "%", "Coefficient of variation of detected event intervals; requires at least three events."),
+    stancePct: unavailableMetric("%", "Contact phase duration is not directly detected."),
+    swingPct: unavailableMetric("%", "Contact phase duration is not directly detected."),
+    leftContacts,
+    rightContacts,
+  };
+}

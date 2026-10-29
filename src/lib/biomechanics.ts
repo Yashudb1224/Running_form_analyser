@@ -1,152 +1,109 @@
-import { FramePose, KinematicSequence, Landmark } from "@/types/telemetry";
+import { FramePose, KinematicSequence, Landmark } from "../types/telemetry";
 
-/**
- * Calculates 2D vector angle (degrees) formed by three keypoints (p1 -> vertex p2 -> p3).
- */
-export function calculate2DAngle(p1: Landmark, p2: Landmark, p3: Landmark): number {
-  if (p1.visibility < 0.2 || p2.visibility < 0.2 || p3.visibility < 0.2) {
-    return 180.0; // Default open angle if low visibility
-  }
+const MIN_VISIBILITY = 0.5;
 
-  const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-  const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-
-  const dot = v1.x * v2.x + v1.y * v2.y;
-  const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-  const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-
-  if (mag1 === 0 || mag2 === 0) return 180.0;
-
-  let cosAngle = dot / (mag1 * mag2);
-  cosAngle = Math.max(-1.0, Math.min(1.0, cosAngle)); // Clamp bounds
-
-  const angleRad = Math.acos(cosAngle);
-  return (angleRad * 180.0) / Math.PI;
+function isUsable(point: Landmark | null | undefined): point is Landmark {
+  return Boolean(
+    point &&
+    point.visibility !== null &&
+    point.visibility >= MIN_VISIBILITY &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y)
+  );
 }
 
-/**
- * Calculates forward trunk lean angle relative to true vertical axis.
- */
-export function calculateTrunkLean(shoulder: Landmark, hip: Landmark): number {
-  if (shoulder.visibility < 0.2 || hip.visibility < 0.2) return 5.0;
+export function calculate2DAngle(
+  p1: Landmark | null | undefined,
+  p2: Landmark | null | undefined,
+  p3: Landmark | null | undefined
+): number | null {
+  if (!isUsable(p1) || !isUsable(p2) || !isUsable(p3)) return null;
 
-  const dx = shoulder.x - hip.x;
-  const dy = hip.y - shoulder.y; // Invert canvas y coordinate
+  const v1x = p1.x - p2.x;
+  const v1y = p1.y - p2.y;
+  const v2x = p3.x - p2.x;
+  const v2y = p3.y - p2.y;
+  const mag1 = Math.hypot(v1x, v1y);
+  const mag2 = Math.hypot(v2x, v2y);
+  if (mag1 === 0 || mag2 === 0) return null;
 
-  const angleRad = Math.atan2(dx, dy);
-  return (angleRad * 180.0) / Math.PI;
+  const cosine = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (mag1 * mag2)));
+  return (Math.acos(cosine) * 180) / Math.PI;
 }
 
-/**
- * Calculates lateral pelvic tilt (hip drop) angle relative to horizontal.
- */
-export function calculatePelvicTilt(lHip: Landmark, rHip: Landmark): number {
-  if (lHip.visibility < 0.2 || rHip.visibility < 0.2) return 0.0;
+export function calculateTrunkLean(shoulder: Landmark | null, hip: Landmark | null): number | null {
+  if (!isUsable(shoulder) || !isUsable(hip)) return null;
+  const vertical = hip.y - shoulder.y;
+  if (Math.hypot(shoulder.x - hip.x, vertical) === 0) return null;
+  return (Math.atan2(shoulder.x - hip.x, vertical) * 180) / Math.PI;
+}
 
+export function calculatePelvicTilt(lHip: Landmark | null, rHip: Landmark | null): number | null {
+  if (!isUsable(lHip) || !isUsable(rHip)) return null;
   const dx = rHip.x - lHip.x;
   const dy = rHip.y - lHip.y;
-
-  if (Math.abs(dx) < 1e-5) return 0.0;
-
-  const angleRad = Math.atan2(dy, dx);
-  return Math.abs((angleRad * 180.0) / Math.PI);
+  if (Math.hypot(dx, dy) === 0) return null;
+  return (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
 }
 
-/**
- * Computes time-series kinematics across all extracted pose frames.
- */
-export function computeSequenceKinematics(frames: FramePose[]): KinematicSequence {
-  const leftKneeAngles: number[] = [];
-  const rightKneeAngles: number[] = [];
-  const leftHipAngles: number[] = [];
-  const rightHipAngles: number[] = [];
-  const leftElbowAngles: number[] = [];
-  const rightElbowAngles: number[] = [];
-  const trunkLeanAngles: number[] = [];
-  const pelvicTiltAngles: number[] = [];
-  const leftAnkleY: number[] = [];
-  const rightAnkleY: number[] = [];
-  const pelvisCenterY: number[] = [];
-
-  for (const frame of frames) {
-    const lm = frame.landmarks;
-
-    // Landmark indices:
-    // 11: Left Shoulder, 12: Right Shoulder
-    // 13: Left Elbow, 14: Right Elbow
-    // 15: Left Wrist, 16: Right Wrist
-    // 23: Left Hip, 24: Right Hip
-    // 25: Left Knee, 26: Right Knee
-    // 27: Left Ankle, 28: Right Ankle
-
-    const lShoulder = lm[11] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rShoulder = lm[12] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const lElbow = lm[13] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rElbow = lm[14] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const lWrist = lm[15] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rWrist = lm[16] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const lHip = lm[23] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rHip = lm[24] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const lKnee = lm[25] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rKnee = lm[26] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const lAnkle = lm[27] || { x: 0, y: 0, z: 0, visibility: 0 };
-    const rAnkle = lm[28] || { x: 0, y: 0, z: 0, visibility: 0 };
-
-    // Knee Flexion Angle (Hip -> Knee -> Ankle)
-    const lKneeAng = calculate2DAngle(lHip, lKnee, lAnkle);
-    const rKneeAng = calculate2DAngle(rHip, rKnee, rAnkle);
-
-    // Hip Angle (Shoulder -> Hip -> Knee)
-    const lHipAng = calculate2DAngle(lShoulder, lHip, lKnee);
-    const rHipAng = calculate2DAngle(rShoulder, rHip, rKnee);
-
-    // Elbow Angle (Shoulder -> Elbow -> Wrist)
-    const lElbowAng = calculate2DAngle(lShoulder, lElbow, lWrist);
-    const rElbowAng = calculate2DAngle(rShoulder, rElbow, rWrist);
-
-    // Trunk Lean
-    const avgShoulder = {
-      x: (lShoulder.x + rShoulder.x) / 2,
-      y: (lShoulder.y + rShoulder.y) / 2,
-      z: 0,
-      visibility: (lShoulder.visibility + rShoulder.visibility) / 2
-    };
-    const avgHip = {
-      x: (lHip.x + rHip.x) / 2,
-      y: (lHip.y + rHip.y) / 2,
-      z: 0,
-      visibility: (lHip.visibility + rHip.visibility) / 2
-    };
-    const trunkLean = calculateTrunkLean(avgShoulder, avgHip);
-
-    // Lateral Pelvic Tilt (Hip Drop)
-    const pelvicTilt = calculatePelvicTilt(lHip, rHip);
-
-    leftKneeAngles.push(lKneeAng);
-    rightKneeAngles.push(rKneeAng);
-    leftHipAngles.push(lHipAng);
-    rightHipAngles.push(rHipAng);
-    leftElbowAngles.push(lElbowAng);
-    rightElbowAngles.push(rElbowAng);
-    trunkLeanAngles.push(trunkLean);
-    pelvicTiltAngles.push(pelvicTilt);
-    leftAnkleY.push(lAnkle.y);
-    rightAnkleY.push(rAnkle.y);
-    pelvisCenterY.push(avgHip.y);
-  }
-
+function midpoint(a: Landmark | null, b: Landmark | null): Landmark | null {
+  if (!isUsable(a) || !isUsable(b)) return null;
   return {
-    leftKneeAngles,
-    rightKneeAngles,
-    leftHipAngles,
-    rightHipAngles,
-    leftElbowAngles,
-    rightElbowAngles,
-    trunkLeanAngles,
-    pelvicTiltAngles,
-    leftAnkleY,
-    rightAnkleY,
-    pelvisCenterY
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    z: a.z !== null && b.z !== null ? (a.z + b.z) / 2 : null,
+    visibility: Math.min(a.visibility ?? 0, b.visibility ?? 0),
   };
 }
 
+export function computeSequenceKinematics(frames: FramePose[]): KinematicSequence {
+  const result: KinematicSequence = {
+    leftKneeAngles: [],
+    rightKneeAngles: [],
+    leftHipAngles: [],
+    rightHipAngles: [],
+    leftElbowAngles: [],
+    rightElbowAngles: [],
+    trunkImagePlaneAngles: [],
+    hipLineImageTiltAngles: [],
+    leftAnkleY: [],
+    rightAnkleY: [],
+    pelvisCenterY: [],
+    torsoHeightPx: [],
+  };
+
+  for (const frame of frames) {
+    const lm = frame.landmarks;
+    const leftShoulder = lm[11] ?? null;
+    const rightShoulder = lm[12] ?? null;
+    const leftElbow = lm[13] ?? null;
+    const rightElbow = lm[14] ?? null;
+    const leftWrist = lm[15] ?? null;
+    const rightWrist = lm[16] ?? null;
+    const leftHip = lm[23] ?? null;
+    const rightHip = lm[24] ?? null;
+    const leftKnee = lm[25] ?? null;
+    const rightKnee = lm[26] ?? null;
+    const leftAnkle = lm[27] ?? null;
+    const rightAnkle = lm[28] ?? null;
+    const shoulderCenter = midpoint(leftShoulder, rightShoulder);
+    const hipCenter = midpoint(leftHip, rightHip);
+
+    result.leftKneeAngles.push(calculate2DAngle(leftHip, leftKnee, leftAnkle));
+    result.rightKneeAngles.push(calculate2DAngle(rightHip, rightKnee, rightAnkle));
+    result.leftHipAngles.push(calculate2DAngle(leftShoulder, leftHip, leftKnee));
+    result.rightHipAngles.push(calculate2DAngle(rightShoulder, rightHip, rightKnee));
+    result.leftElbowAngles.push(calculate2DAngle(leftShoulder, leftElbow, leftWrist));
+    result.rightElbowAngles.push(calculate2DAngle(rightShoulder, rightElbow, rightWrist));
+    result.trunkImagePlaneAngles.push(calculateTrunkLean(shoulderCenter, hipCenter));
+    result.hipLineImageTiltAngles.push(calculatePelvicTilt(leftHip, rightHip));
+    result.leftAnkleY.push(isUsable(leftAnkle) ? leftAnkle.y : null);
+    result.rightAnkleY.push(isUsable(rightAnkle) ? rightAnkle.y : null);
+    result.pelvisCenterY.push(hipCenter?.y ?? null);
+    result.torsoHeightPx.push(
+      shoulderCenter && hipCenter ? Math.abs(hipCenter.y - shoulderCenter.y) || null : null
+    );
+  }
+
+  return result;
+}

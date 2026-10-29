@@ -9,15 +9,15 @@ export const Header: React.FC = () => {
             AI Running Form & Performance Analyzer
           </h1>
           <p className="text-xs font-medium text-slate-400 mt-0.5">
-            Client-Side Computer Vision • Human Pose Estimation • Running Biomechanics
+            Browser-Side Pose Estimation • Landmark-Derived Motion Metrics • Experimental Scoring
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-            WebGL Accelerated
+            Video Processed in Browser
           </span>
           <span className="text-xs font-semibold px-3 py-1 rounded-full bg-success/10 text-success border border-success/20">
-            100% In-Browser Privacy
+            No Video Upload
           </span>
         </div>
       </div>

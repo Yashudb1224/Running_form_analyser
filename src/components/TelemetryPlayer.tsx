@@ -2,6 +2,8 @@ import React, { useRef, useEffect, useState } from "react";
 import { Play, Pause, SkipBack, SkipForward, FastForward, Eye, EyeOff, Sparkles } from "lucide-react";
 import { FramePose, KinematicSequence, Landmark } from "@/types/telemetry";
 
+const MIN_OVERLAY_VISIBILITY = 0.5;
+
 interface TelemetryPlayerProps {
   videoUrl: string;
   frames: FramePose[];
@@ -24,8 +26,9 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [showAngles, setShowAngles] = useState<boolean>(true);
   const [showTrails, setShowTrails] = useState<boolean>(true);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-  // Exact Video Frame Sync Renderer using requestVideoFrameCallback with fallback
+  // Align sampled landmarks to browser media time.
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -35,15 +38,14 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
     let animId: number | null = null;
 
     const renderAtTime = (mediaTime: number) => {
-      const exactFrameFloat = mediaTime * fps;
-      const currentIdx = Math.min(
-        frames.length - 1,
-        Math.max(0, Math.floor(exactFrameFloat))
-      );
-      setCurrentFrameIdx(currentIdx);
+      const { currentIdx, nextIdx, fraction } = getFramePosition(frames, mediaTime);
+      const displayIdx = fraction >= 0.5 ? nextIdx : currentIdx;
+      setCurrentFrameIdx(displayIdx);
 
-      // Interpolate landmarks for buttery smooth sub-frame accuracy
-      const interpolatedLandmarks = getInterpolatedLandmarks(frames, exactFrameFloat);
+      const withinAnalyzedInterval = mediaTime <= frames[frames.length - 1].timestamp + (1 / fps);
+      const interpolatedLandmarks = withinAnalyzedInterval
+        ? getInterpolatedLandmarks(frames, currentIdx, nextIdx, fraction)
+        : null;
 
       // Draw canvas overlay
       drawStylizedOverlay(
@@ -51,7 +53,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
         video,
         interpolatedLandmarks,
         kinematics,
-        currentIdx,
+        displayIdx,
         frames,
         showSkeleton,
         showAngles,
@@ -59,10 +61,10 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
       );
     };
 
-    // Modern browsers: requestVideoFrameCallback for ZERO-LAG video-to-canvas synchronization
-    const handleVideoFrame = (now: DOMHighResTimeStamp, metadata: { mediaTime: number }) => {
+    // Modern browsers provide media timestamps through requestVideoFrameCallback.
+    const handleVideoFrame = (_now: DOMHighResTimeStamp, metadata: { mediaTime: number }) => {
       renderAtTime(metadata.mediaTime);
-      if ("requestVideoFrameCallback" in video) {
+      if (hasVideoFrameCallback(video)) {
         callbackId = (video as any).requestVideoFrameCallback(handleVideoFrame);
       }
     };
@@ -72,17 +74,29 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
       if (video.duration) {
         renderAtTime(video.currentTime);
       }
-      animId = requestAnimationFrame(fallbackRenderLoop);
+      if (!video.paused && !video.ended) {
+        animId = requestAnimationFrame(fallbackRenderLoop);
+      } else {
+        animId = null;
+      }
     };
+    const startFallbackLoop = () => {
+      if (animId === null) animId = requestAnimationFrame(fallbackRenderLoop);
+    };
+    const renderAfterSeek = () => renderAtTime(video.currentTime);
 
-    if ("requestVideoFrameCallback" in video) {
+    if (hasVideoFrameCallback(video)) {
       callbackId = (video as any).requestVideoFrameCallback(handleVideoFrame);
     } else {
-      animId = requestAnimationFrame(fallbackRenderLoop);
+      renderAtTime(video.currentTime);
+      video.addEventListener("play", startFallbackLoop);
+      video.addEventListener("seeked", renderAfterSeek);
     }
 
     return () => {
-      if (callbackId !== null && "cancelVideoFrameCallback" in video) {
+      video.removeEventListener("play", startFallbackLoop);
+      video.removeEventListener("seeked", renderAfterSeek);
+      if (callbackId !== null && Reflect.has(video, "cancelVideoFrameCallback")) {
         (video as any).cancelVideoFrameCallback(callbackId);
       }
       if (animId !== null) {
@@ -97,8 +111,10 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
-      videoRef.current.play();
-      setIsPlaying(true);
+      setPlaybackError(null);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch((error: unknown) => {
+        setPlaybackError(error instanceof Error ? error.message : "The browser could not play this video.");
+      });
     }
   };
 
@@ -115,7 +131,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
     setIsPlaying(false);
 
     const newFrame = Math.min(frames.length - 1, Math.max(0, currentFrameIdx + delta));
-    videoRef.current.currentTime = newFrame / fps;
+    videoRef.current.currentTime = frames[newFrame]?.timestamp ?? 0;
   };
 
   return (
@@ -123,13 +139,13 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            Zero-Lag Cyberpunk Skeleton & Telemetry Overlay
+            Sampled Pose Overlay
             <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono font-semibold uppercase">
-              Sub-Frame Synced
+              {fps} Samples / sec
             </span>
           </h3>
           <p className="text-xs text-slate-400">
-            Real-time HTML5 video frame-synchronized canvas with neon depth shading and motion trails
+            Landmark detections are sampled at {fps} frames per second; lines between samples are visual interpolation, not new detections.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -176,12 +192,14 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
           playsInline
           className="w-full h-full object-contain"
           onEnded={() => setIsPlaying(false)}
+          onError={() => setPlaybackError("The browser could not decode this video for playback.")}
         />
         <canvas
           ref={canvasRef}
-          className="absolute top-0 left-0 w-full h-full pointer-events-none"
+          className="absolute top-0 left-0 w-full h-full pointer-events-none object-contain"
         />
       </div>
+      {playbackError && <p role="alert" className="mt-3 text-xs text-red-300">{playbackError}</p>}
 
       {/* Interactive Controls Bar */}
       <div className="mt-4 flex flex-col gap-3">
@@ -194,7 +212,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
           onChange={(e) => {
             const idx = parseInt(e.target.value, 10);
             if (videoRef.current) {
-              videoRef.current.currentTime = idx / fps;
+              videoRef.current.currentTime = frames[idx]?.timestamp ?? 0;
               setCurrentFrameIdx(idx);
             }
           }}
@@ -226,7 +244,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
             </button>
 
             <span className="text-xs font-mono text-slate-400 ml-2">
-              Frame {currentFrameIdx + 1} / {frames.length} ({((currentFrameIdx + 1) / fps).toFixed(2)}s)
+              Frame {currentFrameIdx + 1} / {frames.length} ({(frames[currentFrameIdx]?.timestamp ?? 0).toFixed(2)}s)
             </span>
           </div>
 
@@ -253,38 +271,59 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
   );
 };
 
+function getFramePosition(frames: FramePose[], time: number): { currentIdx: number; nextIdx: number; fraction: number } {
+  if (frames.length === 0) return { currentIdx: 0, nextIdx: 0, fraction: 0 };
+  if (time <= frames[0].timestamp) return { currentIdx: 0, nextIdx: 0, fraction: 0 };
+  let low = 0;
+  let high = frames.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (frames[middle].timestamp < time) low = middle + 1;
+    else high = middle;
+  }
+
+  const nextIdx = low;
+  const currentIdx = Math.max(0, nextIdx - 1);
+  const interval = frames[nextIdx].timestamp - frames[currentIdx].timestamp;
+  return {
+    currentIdx,
+    nextIdx,
+    fraction: interval > 0 ? Math.max(0, Math.min(1, (time - frames[currentIdx].timestamp) / interval)) : 0,
+  };
+}
+
+function hasVideoFrameCallback(video: HTMLVideoElement): boolean {
+  return Reflect.has(video, "requestVideoFrameCallback");
+}
+
 /**
- * Linearly interpolates landmark keypoints between frame N and frame N+1 for sub-frame smoothness.
+ * Interpolates only between observed samples for overlay display; this does not add detections.
  */
-function getInterpolatedLandmarks(frames: FramePose[], exactFrameFloat: number): Landmark[] | null {
-  if (frames.length === 0) return null;
-
-  const idx1 = Math.floor(exactFrameFloat);
-  const idx2 = Math.min(frames.length - 1, idx1 + 1);
-  const t = exactFrameFloat - idx1;
-
+function getInterpolatedLandmarks(
+  frames: FramePose[],
+  idx1: number,
+  idx2: number,
+  fraction: number
+): (Landmark | null)[] | null {
   const lm1 = frames[idx1]?.landmarks;
   const lm2 = frames[idx2]?.landmarks;
-
   if (!lm1) return null;
-  if (!lm2 || t <= 0.001 || idx1 === idx2) return lm1;
+  if (!lm2 || fraction <= 0.001 || idx1 === idx2) return lm1;
 
-  const interpolated: Landmark[] = new Array(33);
+  const interpolated: (Landmark | null)[] = new Array(33);
   for (let i = 0; i < 33; i++) {
     const p1 = lm1[i];
     const p2 = lm2[i];
 
     if (p1 && p2) {
       interpolated[i] = {
-        x: p1.x + (p2.x - p1.x) * t,
-        y: p1.y + (p2.y - p1.y) * t,
-        z: (p1.z || 0) + ((p2.z || 0) - (p1.z || 0)) * t,
-        visibility: Math.min(p1.visibility, p2.visibility)
+        x: p1.x + (p2.x - p1.x) * fraction,
+        y: p1.y + (p2.y - p1.y) * fraction,
+        z: p1.z !== null && p2.z !== null ? p1.z + (p2.z - p1.z) * fraction : null,
+        visibility: p1.visibility !== null && p2.visibility !== null ? Math.min(p1.visibility, p2.visibility) : null,
       };
-    } else if (p1) {
-      interpolated[i] = { ...p1 };
     } else {
-      interpolated[i] = { x: 0, y: 0, z: 0, visibility: 0 };
+      interpolated[i] = null;
     }
   }
 
@@ -297,7 +336,7 @@ function getInterpolatedLandmarks(frames: FramePose[], exactFrameFloat: number):
 function drawStylizedOverlay(
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement,
-  lm: Landmark[] | null,
+  lm: (Landmark | null)[] | null,
   kinematics: KinematicSequence,
   frameIdx: number,
   allFrames: FramePose[],
@@ -333,7 +372,7 @@ function drawStylizedOverlay(
       const alpha = ((i - startIdx) / trailLength) * 0.45;
 
       // Left Ankle Trail (27)
-      if (prevLm[27] && nextLm[27] && prevLm[27].visibility > 0.3) {
+      if (prevLm[27] && nextLm[27] && (prevLm[27].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (nextLm[27].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
         ctx.strokeStyle = COLOR_LEFT_LEG;
         ctx.globalAlpha = alpha;
         ctx.lineWidth = 3;
@@ -344,7 +383,7 @@ function drawStylizedOverlay(
       }
 
       // Right Ankle Trail (28)
-      if (prevLm[28] && nextLm[28] && prevLm[28].visibility > 0.3) {
+      if (prevLm[28] && nextLm[28] && (prevLm[28].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (nextLm[28].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
         ctx.strokeStyle = COLOR_RIGHT_LEG;
         ctx.globalAlpha = alpha;
         ctx.lineWidth = 3;
@@ -362,10 +401,10 @@ function drawStylizedOverlay(
     const p1 = lm[p1Idx];
     const p2 = lm[p2Idx];
 
-    if (p1 && p2 && p1.visibility > 0.2 && p2.visibility > 0.2) {
+    if (p1 && p2 && (p1.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (p2.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
       // Depth opacity calculation based on Z coordinate
-      const avgZ = (p1.z + p2.z) / 2;
-      const opacity = Math.max(0.4, Math.min(1.0, 1.0 - avgZ * 0.4));
+      const avgZ = p1.z !== null && p2.z !== null ? (p1.z + p2.z) / 2 : null;
+      const opacity = avgZ === null ? 1 : Math.max(0.4, Math.min(1.0, 1.0 - avgZ * 0.4));
 
       ctx.save();
       ctx.globalAlpha = opacity;
@@ -410,7 +449,7 @@ function drawStylizedOverlay(
   // 3. Render Pulsing Joint Rings & Nodes
   const drawJointPulse = (idx: number, color: string, radius: number = 6) => {
     const p = lm[idx];
-    if (p && p.visibility > 0.3) {
+    if (p && (p.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
       ctx.save();
       ctx.shadowColor = color;
       ctx.shadowBlur = 14;
@@ -441,15 +480,15 @@ function drawStylizedOverlay(
   if (drawAngleLabels) {
     const lKneeAng = kinematics.leftKneeAngles[frameIdx];
     const rKneeAng = kinematics.rightKneeAngles[frameIdx];
-    const trunkLean = kinematics.trunkLeanAngles[frameIdx];
+    const trunkLean = kinematics.trunkImagePlaneAngles[frameIdx];
 
-    if (lm[25] && lm[25].visibility > 0.3 && lKneeAng !== undefined) {
+    if (lm[25] && (lm[25].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && lKneeAng !== undefined && lKneeAng !== null) {
       drawAngleBadge(ctx, lm[25].x - 65, lm[25].y - 12, `L Knee: ${lKneeAng.toFixed(0)}°`, COLOR_LEFT_LEG);
     }
-    if (lm[26] && lm[26].visibility > 0.3 && rKneeAng !== undefined) {
+    if (lm[26] && (lm[26].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && rKneeAng !== undefined && rKneeAng !== null) {
       drawAngleBadge(ctx, lm[26].x + 12, lm[26].y - 12, `R Knee: ${rKneeAng.toFixed(0)}°`, COLOR_RIGHT_LEG);
     }
-    if (lm[11] && lm[11].visibility > 0.3 && trunkLean !== undefined) {
+    if (lm[11] && (lm[11].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && trunkLean !== undefined && trunkLean !== null) {
       drawAngleBadge(ctx, lm[11].x - 65, lm[11].y - 30, `Trunk: ${trunkLean.toFixed(0)}°`, COLOR_TORSO);
     }
   }
@@ -478,4 +517,3 @@ function drawAngleBadge(ctx: CanvasRenderingContext2D, x: number, y: number, tex
   ctx.fillText(text, x, y + 2);
   ctx.restore();
 }
-

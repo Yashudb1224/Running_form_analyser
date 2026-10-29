@@ -1,105 +1,103 @@
-import { FormScoreData, GaitMetrics, KinematicSequence, SymmetryMetrics } from "@/types/telemetry";
+import { FormScoreData, GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
+
+function average(values: (number | null)[]): number | null {
+  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+}
+
+function averageAbsolute(values: (number | null)[]): number | null {
+  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  return valid.length ? valid.reduce((sum, value) => sum + Math.abs(value), 0) / valid.length : null;
+}
+
+function unavailable(reason: string): MetricResult {
+  return unavailableMetric("%", reason);
+}
 
 export function calculateFormScore(
   kinematics: KinematicSequence,
   gait: GaitMetrics,
-  symmetry: SymmetryMetrics
+  symmetry: SymmetryMetrics,
+  analysisSufficient: boolean
 ): FormScoreData {
-  // 1. Cadence Sub-score
-  const spm = gait.cadenceSpm;
-  let cadenceScore = 90.0;
-  let cadenceMsg = "";
+  const cadence = gait.cadenceSpm.value;
+  const meanImageLean = averageAbsolute(kinematics.trunkImagePlaneAngles);
+  const cadenceScore = cadence === null
+    ? unavailable("Cadence is unavailable because gait events were insufficient.")
+    : metric(
+      cadence >= 165 && cadence <= 185 ? 100 : cadence >= 155 && cadence < 165 ? 85 : cadence < 155 ? 70 : 92,
+      "heuristic-estimate",
+      "%",
+      "Demonstration rule using the existing cadence bands; not an individualized or validated target."
+    );
+  const postureScore = meanImageLean === null
+    ? unavailable("A valid shoulder and hip midpoint was not available.")
+    : metric(
+      meanImageLean >= 3 && meanImageLean <= 10
+        ? 100
+        : meanImageLean < 3
+          ? 80
+          : meanImageLean <= 15
+            ? 82
+            : 70,
+      "heuristic-estimate",
+      "%",
+      "Demonstration rule using the existing 3–10 degree posture band on mean absolute image-plane angle; camera orientation is not calibrated."
+    );
+  const efficiency = unavailable("A calibrated efficiency score cannot be derived from this 2D video analysis.");
+  const requiredScores = [
+    symmetry.kneeAngleSymmetryScore.value,
+    symmetry.strideConsistencyScore.value,
+    cadenceScore.value,
+    postureScore.value,
+  ];
+  const [symmetryValue, consistencyValue, cadenceValue, postureValue] = requiredScores;
+  const overall = analysisSufficient && requiredScores.every((value) => value !== null)
+    ? metric(
+      Math.round(
+        (0.25 * (symmetryValue ?? 0) +
+          0.25 * (consistencyValue ?? 0) +
+          0.2 * (cadenceValue ?? 0) +
+          0.15 * (postureValue ?? 0)) / 0.85
+      ),
+      "heuristic-estimate",
+      "/ 100",
+      "Experimental weighted rule-based index using available legacy components; uncalibrated efficiency is excluded and weights are renormalized. Not validated."
+    )
+    : unavailable(analysisSufficient
+      ? "The composite is withheld because one or more required inputs are unavailable."
+      : "The composite is withheld because the video did not meet the minimum tracking-quality gate.");
 
-  if (spm >= 165 && spm <= 185) {
-    cadenceScore = 100.0;
-    cadenceMsg = `Cadence of <strong>${spm} steps/min</strong> is in the optimal target zone (165–185 spm).`;
-  } else if (spm >= 155 && spm < 165) {
-    cadenceScore = 85.0;
-    cadenceMsg = `Cadence of <strong>${spm} steps/min</strong> is slightly low. Target 165–180 spm to reduce stride impact force.`;
-  } else if (spm < 155) {
-    cadenceScore = 70.0;
-    cadenceMsg = `Cadence of <strong>${spm} steps/min</strong> indicates overstriding. Consider taking shorter, quicker steps.`;
-  } else {
-    cadenceScore = 92.0;
-    cadenceMsg = `Cadence of <strong>${spm} steps/min</strong> is high, suitable for sprint paces.`;
-  }
+  const category = overall.value === null
+    ? "Insufficient valid data for a composite"
+    : overall.value < 75
+      ? "Review the measured components"
+      : overall.value < 88
+        ? "Mixed results across measured components"
+        : "High rule-based demonstration score";
 
-  // 2. Posture Sub-score
-  const trunkLeanArr = kinematics.trunkLeanAngles;
-  const meanTrunk = trunkLeanArr.length > 0 ? trunkLeanArr.reduce((a, b) => a + b, 0) / trunkLeanArr.length : 6.0;
-  let postureScore = 90.0;
-  let postureMsg = "";
-
-  if (meanTrunk >= 3.0 && meanTrunk <= 10.0) {
-    postureScore = 100.0;
-    postureMsg = `Average forward lean is <strong>${meanTrunk.toFixed(1)}°</strong>, representing optimal forward posture.`;
-  } else if (meanTrunk >= 0.0 && meanTrunk < 3.0) {
-    postureScore = 80.0;
-    postureMsg = `Average forward lean is <strong>${meanTrunk.toFixed(1)}°</strong>, which is slightly upright. Lean forward from the ankles.`;
-  } else if (meanTrunk > 10.0 && meanTrunk <= 15.0) {
-    postureScore = 82.0;
-    postureMsg = `Average forward lean is <strong>${meanTrunk.toFixed(1)}°</strong>, showing noticeable forward incline from the waist.`;
-  } else {
-    postureScore = 70.0;
-    postureMsg = `Trunk lean of <strong>${meanTrunk.toFixed(1)}°</strong> deviates noticeably from optimal posture bounds.`;
-  }
-
-  // 3. Efficiency Sub-score (Ground Contact Time, Vertical Oscillation, Overstriding, Pelvic Drop)
-  let gctScore = gait.groundContactTimeMs <= 230 ? 100 : Math.max(65, 100 - (gait.groundContactTimeMs - 230) * 0.5);
-  let oscScore = gait.verticalOscillationCm <= 8.5 ? 100 : Math.max(65, 100 - (gait.verticalOscillationCm - 8.5) * 6.0);
-  let overstrideScore = gait.overstrideDistanceCm <= 8.0 ? 100 : Math.max(60, 100 - (gait.overstrideDistanceCm - 8.0) * 5.0);
-  let dropScore = gait.pelvicDropMaxDeg <= 4.5 ? 100 : Math.max(65, 100 - (gait.pelvicDropMaxDeg - 4.5) * 8.0);
-
-  const efficiencyScore = Math.round((gctScore + oscScore + overstrideScore + dropScore) / 4);
-
-  // 4. Composite Weighted Score
-  const overallScore = Math.round(
-    0.25 * symmetry.overallSymmetryScore +
-    0.25 * symmetry.strideConsistencyScore +
-    0.20 * cadenceScore +
-    0.15 * postureScore +
-    0.15 * efficiencyScore
-  );
-
-  let category = "Elite Running Form";
-  if (overallScore < 75) {
-    category = "Sub-optimal Form - Adjust Cadence & Overstriding";
-  } else if (overallScore < 88) {
-    category = "Good Form - Minor Efficiency Adjustments Advised";
-  }
-
-  const observations: string[] = [
-    cadenceMsg,
-    postureMsg,
-    `Ground Contact Time is <strong>${gait.groundContactTimeMs}ms</strong> with a Duty Factor of <strong>${gait.dutyFactorPct}%</strong>.`,
-    `Vertical Oscillation is <strong>${gait.verticalOscillationCm} cm</strong>, keeping energy directed forward.`,
-    `Landing Brake Distance is <strong>${gait.overstrideDistanceCm} cm</strong> ahead of hip center.`,
-    `Max Pelvic Drop is <strong>${gait.pelvicDropMaxDeg}°</strong>, indicating hip stability status.`
+  const observations = [
+    cadence === null
+      ? "Cadence is unavailable: too few valid ankle trajectory events were detected."
+      : `Estimated cadence: ${cadence.toFixed(1)} steps/min, derived from tracked ankle trajectory events.`,
+    meanImageLean === null
+      ? "Trunk image-plane angle is unavailable because required shoulder or hip landmarks were missing."
+      : `Mean absolute trunk angle in the image plane: ${meanImageLean.toFixed(1)}°. Camera orientation is not calibrated.`,
+    `Knee-angle asymmetry index: ${symmetry.kneeAngleAsymmetryPct.value === null ? "unavailable" : `${symmetry.kneeAngleAsymmetryPct.value.toFixed(1)}%`}. This compares paired 2D landmark-derived knee angles.`,
+    "Ground-contact time and flight time are not measured and are excluded from scoring.",
+    "All rule-based scores are for demonstration only; they are not clinical, injury-risk, or performance diagnoses.",
   ];
 
-  if (gait.overstrideDistanceCm > 10.0) {
-    observations.push(
-      `Noticed overstriding brake force (<strong>${gait.overstrideDistanceCm} cm</strong> ahead of pelvis). Focus on landing feet under hips.`
-    );
-  }
-
-  if (gait.pelvicDropMaxDeg > 5.0) {
-    observations.push(
-      `Lateral hip drop of <strong>${gait.pelvicDropMaxDeg}°</strong> detected. Gluteus medius strengthening exercises recommended.`
-    );
-  }
-
   return {
-    overallScore,
+    overallScore: overall,
     category,
     observations,
     subScores: {
-      symmetry: symmetry.overallSymmetryScore,
+      symmetry: symmetry.kneeAngleSymmetryScore,
       consistency: symmetry.strideConsistencyScore,
       cadence: cadenceScore,
       posture: postureScore,
-      efficiency: efficiencyScore
-    }
+      efficiency,
+    },
   };
 }
-
