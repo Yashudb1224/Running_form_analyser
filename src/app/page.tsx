@@ -18,7 +18,7 @@ import { buildAnalysisQuality } from "@/lib/analysisQuality";
 import { captureEvidenceFrames } from "@/lib/evidenceFrames";
 import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
-import { FileText, RefreshCw, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { FileText, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
 
 // A running step lasts ~0.3 s, so 30 samples/s are needed to time steps and catch foot strike.
 const SAMPLE_RATE_FPS = 30;
@@ -357,7 +357,7 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <AnalysisQualityPanel quality={report.quality} stepCount={report.gait.stepCount} />
+            <RecordingWarnings quality={report.quality} />
             <div className="max-w-full overflow-x-auto">
               <div className="inline-flex gap-1 rounded-xl border border-border bg-surface p-1 shadow-card" role="tablist" aria-label="Analysis report sections">
                 {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
@@ -413,49 +413,19 @@ export default function Home() {
   );
 }
 
-const CAMERA_VIEW_LABELS: Record<AnalysisQuality["cameraView"], string> = {
-  side: "Side-on",
-  oblique: "Diagonal",
-  "front-or-back": "Front or back",
-  unknown: "Unknown",
-};
-
-function AnalysisQualityPanel({ quality, stepCount }: { quality: AnalysisQuality; stepCount: number }) {
-  const ok = quality.sufficientForSummary;
+/** Shown only when something about the recording needs attention; otherwise nothing is rendered. */
+function RecordingWarnings({ quality }: { quality: AnalysisQuality }) {
+  if (!quality.warnings.length) return null;
   return (
-    <section className={`panel p-4 sm:p-5 ${ok ? "" : "border-warning/40"}`} aria-label="Analysis data quality">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h2 className="text-sm font-semibold text-ink">Recording quality</h2>
-        <span className={`status-pill ${ok ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
-          {ok ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
-          {ok ? "Suitable for scoring" : "Score withheld"}
-        </span>
-      </div>
-      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
-        <QualityValue label="Camera view" value={CAMERA_VIEW_LABELS[quality.cameraView]} />
-        <QualityValue
-          label="Running direction"
-          value={quality.facingDirection === null ? "Unknown" : quality.facingDirection === 1 ? "Left → right" : "Right → left"}
-        />
-        <QualityValue label="Tracked frames" value={`${quality.validTrackingPct}%`} />
-        <QualityValue label="Steps used" value={`${stepCount}`} />
-        <QualityValue label="Landmark visibility" value={quality.meanLandmarkVisibility === null ? "Unavailable" : `${(quality.meanLandmarkVisibility * 100).toFixed(0)}%`} />
-        <QualityValue label="Analysed" value={`${quality.analyzedStartSec.toFixed(1)}–${quality.analyzedEndSec.toFixed(1)} s of ${quality.sourceDurationSec.toFixed(1)} s`} />
-      </dl>
-      {quality.warnings.length > 0 && (
-        <ul className="mt-4 space-y-1.5 border-t border-border pt-3">
-          {quality.warnings.map((warning) => (
-            <li key={warning} className="flex gap-2 text-xs leading-relaxed text-body">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-              {warning}
-            </li>
-          ))}
-        </ul>
-      )}
+    <section className="panel border-warning/40 p-4" aria-label="Recording warnings">
+      <ul className="space-y-1.5">
+        {quality.warnings.map((warning) => (
+          <li key={warning} className="flex gap-2 text-xs leading-relaxed text-body">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+            {warning}
+          </li>
+        ))}
+      </ul>
     </section>
   );
-}
-
-function QualityValue({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-muted">{label}</dt><dd className="mt-0.5 font-semibold text-ink">{value}</dd></div>;
 }
