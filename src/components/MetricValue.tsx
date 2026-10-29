@@ -12,11 +12,15 @@ export function MetricValue({ metric, digits = 1, className = "", showProvenance
   const value = metric.value === null
     ? "Unavailable"
     : `${Number.isInteger(metric.value) ? metric.value : metric.value.toFixed(digits)} ${metric.unit}`;
-  const provenance = metric.status.replaceAll("-", " ");
+  const provenance = metric.status.replace(/-/g, " ");
   return (
-    <span className={className} title={metric.explanation}>
-      {value}
-      {showProvenance && <span className="block text-[10px] font-normal text-slate-500 mt-1 capitalize">{provenance}</span>}
+    <span className={className} aria-label={`${value}; ${provenance}`}>
+      <span>{value}</span>
+      {showProvenance && (
+        <span className={`mt-1 block text-[10px] font-medium capitalize ${metric.status === "unavailable" ? "text-slate-500" : "text-primary"}`}>
+          {provenance}
+        </span>
+      )}
     </span>
   );
 }

@@ -8,67 +8,78 @@ interface VideoUploaderProps {
 export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      onVideoSelected(e.target.files[0]);
-    }
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) onVideoSelected(file);
+    event.target.value = "";
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      onVideoSelected(e.dataTransfer.files[0]);
-    }
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) onVideoSelected(file);
   };
 
   return (
-    <div className="max-w-3xl mx-auto my-12">
-      <div
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
-        className="border-2 border-dashed border-border hover:border-primary/60 bg-surface/50 hover:bg-card/70 transition-all rounded-2xl p-12 text-center cursor-pointer shadow-xl group"
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
-          className="hidden"
-          onChange={handleFileChange}
-        />
+    <div className="mx-auto my-8 max-w-6xl sm:my-12">
+      <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:gap-12">
+        <section className="flex flex-col justify-between border-l-[3px] border-primary py-2 pl-5 sm:pl-7">
+          <div>
+            <p className="eyebrow">Stride Lab <span className="px-1 text-slate-300">/</span> Session input</p>
+            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-tight text-slate-900 sm:text-4xl">
+              Running motion<br className="hidden sm:block lg:hidden" /> analysis
+            </h2>
+          </div>
+          <dl className="mt-8 grid max-w-sm grid-cols-2 gap-x-6 gap-y-5 border-t border-border pt-5">
+            <div>
+              <dt className="eyebrow">Format</dt>
+              <dd className="mt-1 text-sm font-medium text-slate-800">MP4 · MOV · AVI · WebM</dd>
+            </div>
+            <div>
+              <dt className="eyebrow">Sampling</dt>
+              <dd className="mt-1 text-sm font-medium text-slate-800">10 frames / second</dd>
+            </div>
+            <div>
+              <dt className="eyebrow">Analysis window</dt>
+              <dd className="mt-1 text-sm font-medium text-slate-800">First 60 seconds</dd>
+            </div>
+            <div>
+              <dt className="eyebrow">Maximum</dt>
+              <dd className="mt-1 text-sm font-medium text-slate-800">600 frames</dd>
+            </div>
+          </dl>
+        </section>
 
-        <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-          <Upload className="w-8 h-8" />
-        </div>
-
-        <h3 className="text-xl font-bold text-slate-100 mb-2">
-          Upload Running Video
-        </h3>
-        <p className="text-sm text-slate-400 max-w-md mx-auto mb-6">
-          Drag and drop a side-profile running video (.mp4, .mov, or .avi). For optimal biomechanical tracking, ensure full body visibility from head to toe.
-        </p>
-
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-card border border-border text-xs font-semibold text-slate-300">
-          <Video className="w-4 h-4 text-primary" />
-          <span>Recommended: 10–30s video; browser analysis samples at 10 FPS</span>
+        <div
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
+          className="panel flex min-h-72 flex-col items-center justify-center border-dashed bg-white px-5 py-10 text-center sm:min-h-80 sm:px-10"
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={handleFileChange}
+          />
+          <span className="mb-5 flex h-12 w-12 items-center justify-center border border-border bg-card text-primary">
+            <Upload className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <h3 className="text-lg font-semibold text-slate-900">Select a running video</h3>
+          <p className="mt-1 text-sm text-slate-500">or drag and drop a file here</p>
+          <button type="button" onClick={() => inputRef.current?.click()} className="primary-button mt-5">
+            <Video className="h-4 w-4" aria-hidden="true" />
+            Browse videos
+          </button>
         </div>
       </div>
 
-      <div className="mt-6 flex items-center justify-center gap-6 text-xs text-slate-400">
-        <span className="flex items-center gap-1.5">
-          <ShieldCheck className="w-4 h-4 text-success" /> Video frames are processed in this browser; the app does not upload them
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-primary inline-block"></span> MediaPipe Pose tracking
-        </span>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-xs text-slate-600">
+        <span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-success" aria-hidden="true" />Video stays in this browser</span>
+        <span>Pose assets load from jsDelivr</span>
       </div>
-      <p className="text-[11px] text-slate-500 text-center mt-3 max-w-2xl mx-auto">
-        MediaPipe scripts and model assets are loaded from jsDelivr; the interface font is requested from Google Fonts. Those third-party asset requests may occur, but video frames are not sent to an external analysis API.
-      </p>
     </div>
   );
 };

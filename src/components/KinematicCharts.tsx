@@ -6,112 +6,134 @@ interface KinematicChartsProps {
   report: CompleteAnalysisReport;
 }
 
+const AXIS_COLOR = "#687681";
+const GRID_COLOR = "#e3e8ec";
+const LEFT_COLOR = "#2d6598";
+const RIGHT_COLOR = "#c17b48";
+const NEUTRAL_COLOR = "#75818b";
+const chartMargin = { top: 8, right: 12, left: -16, bottom: 4 };
+
+function ChartEmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center border border-dashed border-border px-4 text-center text-xs text-slate-500">
+      No valid tracked samples are available for this chart.
+    </div>
+  );
+}
+
 export const KinematicCharts: React.FC<KinematicChartsProps> = ({ report }) => {
   const { kinematics, frames, fps } = report;
 
-  // Prepare chart dataset
   const chartData = kinematics.leftKneeAngles.map((leftKnee, idx) => {
     const timestamp = frames[idx] ? frames[idx].timestamp : idx / (fps || 30);
+    const leftHip = kinematics.leftHipAngles[idx];
+    const rightHip = kinematics.rightHipAngles[idx];
+    const rightKnee = kinematics.rightKneeAngles[idx];
+    const trunkLean = kinematics.trunkImagePlaneAngles[idx];
+    const pelvicTilt = kinematics.hipLineImageTiltAngles[idx];
+    const leftElbow = kinematics.leftElbowAngles[idx];
+    const rightElbow = kinematics.rightElbowAngles[idx];
     return {
-      time: parseFloat(timestamp.toFixed(2)),
-      leftKnee: leftKnee === null ? null : Math.round(leftKnee),
-      rightKnee: kinematics.rightKneeAngles[idx] === null ? null : Math.round(kinematics.rightKneeAngles[idx] ?? 0),
-      leftHip: kinematics.leftHipAngles[idx] === null ? null : Math.round(kinematics.leftHipAngles[idx] ?? 0),
-      rightHip: kinematics.rightHipAngles[idx] === null ? null : Math.round(kinematics.rightHipAngles[idx] ?? 0),
-      trunkLean: kinematics.trunkImagePlaneAngles[idx] === null ? null : parseFloat((kinematics.trunkImagePlaneAngles[idx] ?? 0).toFixed(1)),
-      pelvicTilt: kinematics.hipLineImageTiltAngles[idx] === null ? null : parseFloat((kinematics.hipLineImageTiltAngles[idx] ?? 0).toFixed(1)),
-      leftElbow: kinematics.leftElbowAngles[idx] === null ? null : Math.round(kinematics.leftElbowAngles[idx] ?? 0),
-      rightElbow: kinematics.rightElbowAngles[idx] === null ? null : Math.round(kinematics.rightElbowAngles[idx] ?? 0)
+      time: Number(timestamp.toFixed(2)),
+      leftKnee: leftKnee === null ? null : Number(leftKnee.toFixed(1)),
+      rightKnee: rightKnee === null ? null : Number(rightKnee.toFixed(1)),
+      leftHip: leftHip === null ? null : Number(leftHip.toFixed(1)),
+      rightHip: rightHip === null ? null : Number(rightHip.toFixed(1)),
+      trunkLean: trunkLean === null ? null : Number(trunkLean.toFixed(1)),
+      pelvicTilt: pelvicTilt === null ? null : Number(pelvicTilt.toFixed(1)),
+      leftElbow: leftElbow === null ? null : Number(leftElbow.toFixed(1)),
+      rightElbow: rightElbow === null ? null : Number(rightElbow.toFixed(1)),
     };
   });
 
+  const hasData = (...keys: (keyof (typeof chartData)[number])[]) =>
+    chartData.some((row) => keys.some((key) => typeof row[key] === "number" && Number.isFinite(row[key])));
+
+  const axisProps = {
+    stroke: AXIS_COLOR,
+    tick: { fill: AXIS_COLOR, fontSize: 11 },
+    tickLine: { stroke: GRID_COLOR },
+    axisLine: { stroke: GRID_COLOR },
+  };
+  const tooltipStyle = {
+    backgroundColor: "#ffffff",
+    border: "1px solid #dce2e7",
+    borderRadius: 2,
+    color: "#202a33",
+    fontSize: 12,
+  };
+
   return (
-    <div className="space-y-8">
-      <div>
-        <h3 className="text-lg font-bold text-slate-100 mb-1">
-          Time-Series Kinematic Charts
-        </h3>
-        <p className="text-xs text-slate-400">
-          2D landmark-derived values; gaps indicate unavailable landmarks rather than zero-angle samples.
-        </p>
+    <section aria-labelledby="kinematic-heading">
+      <div className="mb-2 border-b border-border pb-4">
+        <p className="eyebrow">Motion traces</p>
+        <h3 id="kinematic-heading" className="mt-1 text-lg font-semibold text-slate-900">Kinematic time series</h3>
       </div>
 
-      {/* 1. Internal Knee Angle Chart */}
-      <div className="bg-surface rounded-2xl border border-border p-5 shadow-lg">
-        <h4 className="text-sm font-bold text-slate-200 mb-4">
-          1. Internal Knee Angle (Degrees; straight configuration approaches 180°)
-        </h4>
-
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222C3E" />
-              <XAxis dataKey="time" stroke="#64748B" tick={{ fontSize: 12 }} label={{ value: "Time (s)", position: "insideBottomRight", offset: -5 }} />
-              <YAxis stroke="#64748B" tick={{ fontSize: 12 }} domain={[0, 180]} label={{ value: "Angle (°)", angle: -90, position: "insideLeft" }} />
-              <Tooltip contentStyle={{ backgroundColor: "#161F30", borderColor: "#222C3E", borderRadius: "8px", color: "#F8FAFC" }} />
-              <Legend />
-              <Line type="monotone" connectNulls={false} dataKey="leftKnee" name="Left Internal Knee Angle (°)" stroke="#00E5FF" strokeWidth={2.5} dot={false} />
-              <Line type="monotone" connectNulls={false} dataKey="rightKnee" name="Right Internal Knee Angle (°)" stroke="#FF00AA" strokeWidth={2.5} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+      <article className="chart-panel">
+        <div className="mb-3">
+          <h4 className="text-sm font-semibold text-slate-800">Internal knee angle</h4>
         </div>
-
-        <div className="mt-4 bg-card/60 border border-border rounded-xl p-4 text-xs text-slate-300 leading-relaxed">
-          <strong>Graph explanation:</strong> Values are 2D internal angles at the knee. A larger value indicates a straighter configuration; the maximum angle is not maximum knee flexion. Missing segments are not filled with zeroes.
+        <div className="h-64 w-full sm:h-72">
+          {hasData("leftKnee", "rightKnee") ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} {...axisProps} tickFormatter={(value: number) => `${value}s`} />
+                <YAxis domain={[0, 180]} {...axisProps} unit="°" width={44} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(value: number, name: string) => [`${value}°`, name]} labelFormatter={(value: number) => `${value} s`} />
+                <Legend verticalAlign="top" height={28} iconType="plainline" wrapperStyle={{ fontSize: 11, color: AXIS_COLOR }} />
+                <Line type="linear" connectNulls={false} dataKey="leftKnee" name="Left" stroke={LEFT_COLOR} strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" connectNulls={false} dataKey="rightKnee" name="Right" stroke={RIGHT_COLOR} strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <ChartEmptyState />}
         </div>
-      </div>
+      </article>
 
-      {/* 2. Hip Drive & Trunk Lean Chart */}
-      <div className="bg-surface rounded-2xl border border-border p-5 shadow-lg">
-        <h4 className="text-sm font-bold text-slate-200 mb-4">
-          2. Hip Angle & Trunk Image-Plane Angle (Degrees)
-        </h4>
-
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222C3E" />
-              <XAxis dataKey="time" stroke="#64748B" tick={{ fontSize: 12 }} label={{ value: "Time (s)", position: "insideBottomRight", offset: -5 }} />
-              <YAxis stroke="#64748B" tick={{ fontSize: 12 }} domain={[-10, 180]} />
-              <Tooltip contentStyle={{ backgroundColor: "#161F30", borderColor: "#222C3E", borderRadius: "8px", color: "#F8FAFC" }} />
-              <Legend />
-              <Line type="monotone" connectNulls={false} dataKey="leftHip" name="Left Hip Angle (°)" stroke="#00FF66" strokeWidth={2} dot={false} />
-              <Line type="monotone" connectNulls={false} dataKey="rightHip" name="Right Hip Angle (°)" stroke="#FFD700" strokeWidth={2} dot={false} />
-              <Line type="monotone" connectNulls={false} dataKey="trunkLean" name="Trunk Image-Plane Angle (°)" stroke="#F8FAFC" strokeDasharray="5 5" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+      <article className="chart-panel">
+        <div className="mb-3">
+          <h4 className="text-sm font-semibold text-slate-800">Hip and trunk angles</h4>
         </div>
-
-        <div className="mt-4 bg-card/60 border border-border rounded-xl p-4 text-xs text-slate-300 leading-relaxed">
-          <strong>Graph explanation:</strong> The trunk angle is relative to the image vertical. Without knowing camera orientation, it is not labelled as calibrated forward lean. Hip angles are 2D projections.
+        <div className="h-64 w-full sm:h-72">
+          {hasData("leftHip", "rightHip", "trunkLean") ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} {...axisProps} tickFormatter={(value: number) => `${value}s`} />
+                <YAxis domain={["auto", "auto"]} {...axisProps} unit="°" width={44} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(value: number, name: string) => [`${value}°`, name]} labelFormatter={(value: number) => `${value} s`} />
+                <Legend verticalAlign="top" height={28} iconType="plainline" wrapperStyle={{ fontSize: 11, color: AXIS_COLOR }} />
+                <Line type="linear" connectNulls={false} dataKey="leftHip" name="Left hip" stroke={LEFT_COLOR} strokeWidth={1.8} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" connectNulls={false} dataKey="rightHip" name="Right hip" stroke={RIGHT_COLOR} strokeWidth={1.8} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" connectNulls={false} dataKey="trunkLean" name="Trunk image angle" stroke={NEUTRAL_COLOR} strokeWidth={1.8} strokeDasharray="5 4" dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <ChartEmptyState />}
         </div>
-      </div>
+      </article>
 
-      {/* 3. Lateral Pelvic Tilt (Hip Drop) & Arm Drive Chart */}
-      <div className="bg-surface rounded-2xl border border-border p-5 shadow-lg">
-        <h4 className="text-sm font-bold text-slate-200 mb-4">
-          3. Hip-Line Image Tilt & Elbow Angles (Degrees)
-        </h4>
-
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222C3E" />
-              <XAxis dataKey="time" stroke="#64748B" tick={{ fontSize: 12 }} label={{ value: "Time (s)", position: "insideBottomRight", offset: -5 }} />
-              <YAxis stroke="#64748B" tick={{ fontSize: 12 }} domain={[0, 140]} />
-              <Tooltip contentStyle={{ backgroundColor: "#161F30", borderColor: "#222C3E", borderRadius: "8px", color: "#F8FAFC" }} />
-              <Legend />
-              <Line type="monotone" connectNulls={false} dataKey="pelvicTilt" name="Hip-Line Image Tilt (°)" stroke="#C084FC" strokeWidth={2.5} dot={false} />
-              <Line type="monotone" connectNulls={false} dataKey="leftElbow" name="Left Elbow Angle (°)" stroke="#38BDF8" strokeWidth={1.5} dot={false} />
-              <Line type="monotone" connectNulls={false} dataKey="rightElbow" name="Right Elbow Angle (°)" stroke="#F472B6" strokeWidth={1.5} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+      <article className="chart-panel">
+        <div className="mb-3">
+          <h4 className="text-sm font-semibold text-slate-800">Hip-line tilt and elbow angles</h4>
         </div>
-
-        <div className="mt-4 bg-card/60 border border-border rounded-xl p-4 text-xs text-slate-300 leading-relaxed">
-          <strong>Graph explanation:</strong> The hip-line angle is measured in image space and does not diagnose pelvic drop. Elbow angles are 2D landmark geometry, not arm-swing amplitude.
+        <div className="h-64 w-full sm:h-72">
+          {hasData("pelvicTilt", "leftElbow", "rightElbow") ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={chartMargin}>
+                <CartesianGrid stroke={GRID_COLOR} vertical={false} />
+                <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} {...axisProps} tickFormatter={(value: number) => `${value}s`} />
+                <YAxis domain={[0, 180]} {...axisProps} unit="°" width={44} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(value: number, name: string) => [`${value}°`, name]} labelFormatter={(value: number) => `${value} s`} />
+                <Legend verticalAlign="top" height={28} iconType="plainline" wrapperStyle={{ fontSize: 11, color: AXIS_COLOR }} />
+                <Line type="linear" connectNulls={false} dataKey="pelvicTilt" name="Hip-line image tilt" stroke={NEUTRAL_COLOR} strokeWidth={1.8} strokeDasharray="5 4" dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" connectNulls={false} dataKey="leftElbow" name="Left elbow" stroke={LEFT_COLOR} strokeWidth={1.8} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" connectNulls={false} dataKey="rightElbow" name="Right elbow" stroke={RIGHT_COLOR} strokeWidth={1.8} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <ChartEmptyState />}
         </div>
-      </div>
-    </div>
+      </article>
+    </section>
   );
 };

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Running Form & Performance Analyzer",
-  description: "Browser-side pose tracking and exploratory running-form telemetry dashboard",
+  title: "Stride Lab | Running Motion Analysis",
+  description: "Browser-based running motion analysis using pose landmarks and image-space measurements.",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased min-h-screen bg-background text-slate-100">
+      <body className="antialiased min-h-screen bg-background text-slate-800">
         {children}
       </body>
     </html>

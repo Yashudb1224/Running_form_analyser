@@ -19,8 +19,10 @@ npm run build
 
 ## Analysis flow and limits
 
-The browser samples the first 60 seconds at 10 samples per second (up to 600 frames). MediaPipe Pose and its model assets are loaded from jsDelivr; the interface font is requested from Google Fonts. The app does not upload the selected video or send frames to an analysis API.
+The browser samples the first 60 seconds at 10 samples per second (up to 600 frames). MediaPipe Pose and its model assets are loaded from jsDelivr. The app does not upload the selected video or send frames to an analysis API.
 
 Missing detections remain missing. Each frame retains nullable landmarks and tracking visibility; angles and downstream metrics with insufficient inputs are marked unavailable. The dashboard shows coverage and metric provenance. Gait cadence is estimated from ankle-trajectory events. Ground-contact and flight duration are not calculated. Pixel-space distances are not converted to centimetres; normalized image-space values remain uncalibrated.
 
-Form and consistency scores are experimental, rule-based demonstration indices, not validated sports-science assessments. Camera orientation, perspective, and physical scale are not calibrated. The analysis is not a medical or injury-risk tool.
+Form and consistency scores are experimental, rule-based demonstration indices, not validated sports-science assessments. The posture panel compares the observed image-plane angle with the existing score band only; it is not an ideal-posture prescription. Camera orientation, perspective, and physical scale are not calibrated. The analysis is not a medical or injury-risk tool.
+
+The report includes a Metric guide describing the displayed calculations, units, and limitations. The PDF export contains session quality, metric comparisons, score components, and sampled kinematic traces. Ground-contact and flight times are not shown because they are not measured by this method.

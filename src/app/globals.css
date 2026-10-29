@@ -2,30 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
-body {
-  background-color: #0B0F17;
-  color: #F8FAFC;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  overflow-x: hidden;
+html {
+  color-scheme: light;
 }
 
-/* Custom Scrollbars */
+body {
+  min-width: 320px;
+  overflow-x: hidden;
+  background: #f3f1ec;
+  color: #202a33;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #2d6598;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #d7e5f1;
+  color: #172a3a;
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B0F17;
+  background: #eef1f3;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1E293B;
-  border-radius: 4px;
+  border: 2px solid #eef1f3;
+  border-radius: 8px;
+  background: #b7c1c9;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #8d9ba6;
+}
+
+@layer components {
+  .app-shell {
+    @apply min-h-screen bg-background text-slate-800;
+  }
+
+  .panel {
+    @apply border border-border bg-surface;
+  }
+
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500;
+  }
+
+  .section-title {
+    @apply text-base font-semibold tracking-tight text-slate-800;
+  }
+
+  .metric-label {
+    @apply text-xs font-medium text-slate-500;
+  }
+
+  .metric-number {
+    @apply font-mono font-semibold tracking-tight text-slate-900;
+  }
+
+  .control-button {
+    @apply inline-flex min-h-9 items-center justify-center gap-2 border border-border bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50;
+  }
+
+  .primary-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-[#245783];
+  }
+
+  .quiet-button {
+    @apply inline-flex min-h-9 items-center justify-center gap-2 px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100;
+  }
+
+  .chart-panel {
+    @apply border-b border-border py-6 first:border-t;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

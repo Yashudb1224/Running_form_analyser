@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward, FastForward, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, FastForward, Eye, EyeOff } from "lucide-react";
 import { FramePose, KinematicSequence, Landmark } from "@/types/telemetry";
 
 const MIN_OVERLAY_VISIBILITY = 0.5;
@@ -25,7 +25,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [showAngles, setShowAngles] = useState<boolean>(true);
-  const [showTrails, setShowTrails] = useState<boolean>(true);
+  const [showTrails, setShowTrails] = useState<boolean>(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   // Align sampled landmarks to browser media time.
@@ -135,57 +135,44 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
   };
 
   return (
-    <div className="bg-surface rounded-2xl border border-border p-5 shadow-xl">
-      <div className="flex items-center justify-between mb-4">
+    <section className="panel p-3 sm:p-5" aria-label="Sampled pose video player">
+      <div className="mb-4 flex flex-col gap-3 border-b border-border pb-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            Sampled Pose Overlay
-            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono font-semibold uppercase">
-              {fps} Samples / sec
-            </span>
+          <h3 className="text-base font-semibold text-slate-900">
+            Sampled pose overlay
+            <span className="ml-2 font-mono text-xs font-medium text-slate-500">{fps} samples/s</span>
           </h3>
-          <p className="text-xs text-slate-400">
+          <p className="mt-1 text-xs text-slate-500">
             Landmark detections are sampled at {fps} frames per second; lines between samples are visual interpolation, not new detections.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => setShowSkeleton(!showSkeleton)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
-              showSkeleton
-                ? "bg-primary/10 border-primary/30 text-primary"
-                : "bg-card border-border text-slate-400"
-            }`}
+            aria-pressed={showSkeleton}
+            className={`control-button min-h-8 px-2.5 ${showSkeleton ? "border-primary/50 text-primary" : ""}`}
           >
-            {showSkeleton ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {showSkeleton ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
             Skeleton
           </button>
           <button
             onClick={() => setShowTrails(!showTrails)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
-              showTrails
-                ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
-                : "bg-card border-border text-slate-400"
-            }`}
+            aria-pressed={showTrails}
+            className={`control-button min-h-8 px-2.5 ${showTrails ? "border-primary/50 text-primary" : ""}`}
           >
-            <Sparkles className="w-3.5 h-3.5" />
             Motion Trails
           </button>
           <button
             onClick={() => setShowAngles(!showAngles)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
-              showAngles
-                ? "bg-primary/10 border-primary/30 text-primary"
-                : "bg-card border-border text-slate-400"
-            }`}
+            aria-pressed={showAngles}
+            className={`control-button min-h-8 px-2.5 ${showAngles ? "border-primary/50 text-primary" : ""}`}
           >
             Angle Labels
           </button>
         </div>
       </div>
 
-      {/* Video & Canvas Container */}
-      <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-border shadow-inner">
+      <div className="relative aspect-video w-full overflow-hidden bg-[#12171c]">
         <video
           ref={videoRef}
           src={videoUrl}
@@ -199,11 +186,9 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
           className="absolute top-0 left-0 w-full h-full pointer-events-none object-contain"
         />
       </div>
-      {playbackError && <p role="alert" className="mt-3 text-xs text-red-300">{playbackError}</p>}
+      {playbackError && <p role="alert" className="mt-3 text-xs text-danger">{playbackError}</p>}
 
-      {/* Interactive Controls Bar */}
       <div className="mt-4 flex flex-col gap-3">
-        {/* Seek Bar */}
         <input
           type="range"
           min={0}
@@ -216,49 +201,50 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
               setCurrentFrameIdx(idx);
             }
           }}
-          className="w-full accent-primary h-1.5 bg-card rounded-lg cursor-pointer"
+          aria-label="Seek to sampled frame"
+          className="h-1.5 w-full cursor-pointer accent-primary"
         />
 
-        {/* Buttons Bar */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               onClick={togglePlay}
-              className="w-10 h-10 rounded-xl bg-primary text-black flex items-center justify-center font-bold hover:brightness-110 transition-all shadow-lg shadow-primary/20"
+              aria-label={isPlaying ? "Pause video" : "Play video"}
+              className="inline-flex h-9 w-9 items-center justify-center bg-primary text-white transition-colors hover:bg-[#245783]"
             >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
             </button>
             <button
               onClick={() => stepFrame(-1)}
-              className="p-2 rounded-xl bg-card border border-border hover:bg-border/50 text-slate-300 transition-colors"
-              title="Previous Frame"
+              className="control-button h-9 w-9 min-h-0 px-0"
+              aria-label="Previous sampled frame"
             >
-              <SkipBack className="w-4 h-4" />
+              <SkipBack className="h-4 w-4" />
             </button>
             <button
               onClick={() => stepFrame(1)}
-              className="p-2 rounded-xl bg-card border border-border hover:bg-border/50 text-slate-300 transition-colors"
-              title="Next Frame"
+              className="control-button h-9 w-9 min-h-0 px-0"
+              aria-label="Next sampled frame"
             >
-              <SkipForward className="w-4 h-4" />
+              <SkipForward className="h-4 w-4" />
             </button>
 
-            <span className="text-xs font-mono text-slate-400 ml-2">
-              Frame {currentFrameIdx + 1} / {frames.length} ({(frames[currentFrameIdx]?.timestamp ?? 0).toFixed(2)}s)
+            <span className="ml-1 font-mono text-xs text-slate-600 sm:ml-2">
+              Sample {currentFrameIdx + 1} / {frames.length} <span className="text-slate-400">·</span> {(frames[currentFrameIdx]?.timestamp ?? 0).toFixed(2)} s
             </span>
           </div>
 
-          {/* Speed Selectors */}
-          <div className="flex items-center gap-1.5">
-            <FastForward className="w-4 h-4 text-slate-400 mr-1" />
+          <div className="flex items-center gap-1">
+            <FastForward className="mr-1 h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
             {[0.25, 0.5, 1.0].map((speed) => (
               <button
                 key={speed}
                 onClick={() => changeSpeed(speed)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                aria-pressed={playbackSpeed === speed}
+                className={`min-h-8 border px-2.5 text-xs font-medium transition-colors ${
                   playbackSpeed === speed
-                    ? "bg-primary border-primary text-black font-bold"
-                    : "bg-card border-border text-slate-400 hover:text-slate-200"
+                    ? "border-primary bg-primary text-white"
+                    : "border-border bg-white text-slate-600 hover:bg-slate-50"
                 }`}
               >
                 {speed}x
@@ -267,7 +253,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };
 
@@ -330,9 +316,6 @@ function getInterpolatedLandmarks(
   return interpolated;
 }
 
-/**
- * High-tech Cyberpunk Canvas Renderer with Neon Glow, Depth Opacity, and Motion Trails.
- */
 function drawStylizedOverlay(
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement,
@@ -353,10 +336,10 @@ function drawStylizedOverlay(
 
   if (!lm || !drawSkeleton) return;
 
-  const COLOR_LEFT_LEG = "#00E5FF";   // Neon Cyan
-  const COLOR_RIGHT_LEG = "#FF00AA";  // Neon Magenta
-  const COLOR_TORSO = "#FFD700";      // Neon Amber/Gold
-  const COLOR_ARMS = "#A855F7";       // Neon Purple
+  const COLOR_LEFT_LEG = "#72A9D4";
+  const COLOR_RIGHT_LEG = "#E6A56D";
+  const COLOR_TORSO = "#E1E7EA";
+  const COLOR_ARMS = "#B8C7D0";
 
   // 1. Render Motion Trails for Ankle & Knee Stride Trajectories
   if (drawTrails && frameIdx > 2) {
@@ -369,13 +352,13 @@ function drawStylizedOverlay(
       const nextLm = allFrames[i + 1]?.landmarks;
       if (!prevLm || !nextLm) continue;
 
-      const alpha = ((i - startIdx) / trailLength) * 0.45;
+      const alpha = ((i - startIdx) / trailLength) * 0.2;
 
       // Left Ankle Trail (27)
       if (prevLm[27] && nextLm[27] && (prevLm[27].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (nextLm[27].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
         ctx.strokeStyle = COLOR_LEFT_LEG;
         ctx.globalAlpha = alpha;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(prevLm[27].x, prevLm[27].y);
         ctx.lineTo(nextLm[27].x, nextLm[27].y);
@@ -386,7 +369,7 @@ function drawStylizedOverlay(
       if (prevLm[28] && nextLm[28] && (prevLm[28].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (nextLm[28].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
         ctx.strokeStyle = COLOR_RIGHT_LEG;
         ctx.globalAlpha = alpha;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(prevLm[28].x, prevLm[28].y);
         ctx.lineTo(nextLm[28].x, nextLm[28].y);
@@ -402,23 +385,13 @@ function drawStylizedOverlay(
     const p2 = lm[p2Idx];
 
     if (p1 && p2 && (p1.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && (p2.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
-      // Depth opacity calculation based on Z coordinate
-      const avgZ = p1.z !== null && p2.z !== null ? (p1.z + p2.z) / 2 : null;
-      const opacity = avgZ === null ? 1 : Math.max(0.4, Math.min(1.0, 1.0 - avgZ * 0.4));
-
-      ctx.save();
-      ctx.globalAlpha = opacity;
-      ctx.shadowColor = baseColor;
-      ctx.shadowBlur = 12;
-
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.strokeStyle = baseColor;
-      ctx.lineWidth = baseWidth;
+      ctx.lineWidth = Math.max(2, baseWidth - 1);
       ctx.lineCap = "round";
       ctx.stroke();
-      ctx.restore();
     }
   };
 
@@ -450,23 +423,11 @@ function drawStylizedOverlay(
   const drawJointPulse = (idx: number, color: string, radius: number = 6) => {
     const p = lm[idx];
     if (p && (p.visibility ?? 0) >= MIN_OVERLAY_VISIBILITY) {
-      ctx.save();
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 14;
-
-      // Inner Solid Core
-      ctx.fillStyle = "#FFFFFF";
+      ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(3, radius - 2), 0, Math.PI * 2);
       ctx.fill();
 
-      // Outer Glow Ring
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, radius + 4, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
     }
   };
 
@@ -495,25 +456,22 @@ function drawStylizedOverlay(
 }
 
 function drawAngleBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string) {
-  ctx.font = "bold 13px Inter, sans-serif";
+  ctx.font = "600 12px Inter, sans-serif";
   const metrics = ctx.measureText(text);
   const padX = 8;
   const padY = 5;
 
   ctx.save();
-  ctx.fillStyle = "rgba(11, 15, 23, 0.88)";
+  ctx.fillStyle = "rgba(18, 23, 28, 0.92)";
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
+  ctx.lineWidth = 1;
 
   ctx.beginPath();
-  ctx.roundRect(x - padX, y - 14, metrics.width + padX * 2, 22, 6);
+  ctx.roundRect(x - padX, y - 14, metrics.width + padX * 2, 22, 3);
   ctx.fill();
   ctx.stroke();
 
   ctx.fillStyle = "#F8FAFC";
-  ctx.shadowBlur = 0;
   ctx.fillText(text, x, y + 2);
   ctx.restore();
 }

@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
 import { VideoUploader } from "@/components/VideoUploader";
 import { TelemetryPlayer } from "@/components/TelemetryPlayer";
 import { ExecutiveSummary } from "@/components/ExecutiveSummary";
-import { CoachingFeed } from "@/components/CoachingFeed";
+import { MetricGuide } from "@/components/MetricGuide";
 import { KinematicCharts } from "@/components/KinematicCharts";
 import { SymmetryBreakdown } from "@/components/SymmetryBreakdown";
 import { AnalysisQuality, CompleteAnalysisReport, FramePose } from "@/types/telemetry";
@@ -13,9 +13,8 @@ import { computeSequenceKinematics } from "@/lib/biomechanics";
 import { analyzeGaitCycles } from "@/lib/gaitCycle";
 import { evaluateSymmetryAndConsistency } from "@/lib/symmetryAnalyzer";
 import { calculateFormScore } from "@/lib/formScorer";
-import { buildCsvReport } from "@/lib/csvReport";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame, hasCompleteTrackingCoverage } from "@/lib/poseEstimator";
-import { Download, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
+import { FileText, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
 
 const SAMPLE_RATE_FPS = 10;
 const MAX_SAMPLED_FRAMES = 600;
@@ -96,7 +95,7 @@ export default function Home() {
   const [progressMessage, setProgressMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [report, setReport] = useState<CompleteAnalysisReport | null>(null);
-  const [activeTab, setActiveTab] = useState<"summary" | "video" | "charts" | "symmetry">("summary");
+  const [activeTab, setActiveTab] = useState<"summary" | "video" | "charts" | "symmetry" | "guide">("summary");
   const activeJobRef = useRef(0);
   const estimatorRef = useRef<BrowserPoseEstimator | null>(null);
   const videoUrlRef = useRef<string | null>(null);
@@ -281,85 +280,97 @@ export default function Home() {
     setActiveTab("summary");
   };
 
-  const downloadCSVReport = () => {
+  const downloadReportPdf = async () => {
     if (!report) return;
-    const csv = buildCsvReport(report);
-    const blobUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = "running_form_telemetry_report.csv";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    const { downloadPdfReport } = await import("@/lib/pdfReport");
+    downloadPdfReport(report, videoFile?.name ?? "running-analysis");
   };
 
   return (
-    <div className="min-h-screen pb-16">
+    <div className="app-shell pb-12">
       <Header />
-      <main className="max-w-7xl mx-auto px-6">
+      <main className="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
         {!videoFile && !isAnalyzing && <VideoUploader onVideoSelected={handleVideoSelected} />}
 
         {errorMessage && (
-          <div role="alert" className="my-6 rounded-xl border border-danger/40 bg-danger/10 p-4 text-sm text-red-200 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 shrink-0 text-danger" />
+          <div role="alert" className="my-6 flex items-start gap-3 border border-danger/30 bg-red-50 p-4 text-sm text-red-900">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
             <div className="flex-1"><strong>Analysis could not continue.</strong> {errorMessage}</div>
-            <button onClick={resetAnalysis} className="underline underline-offset-2">Reset</button>
+            <button onClick={resetAnalysis} className="text-xs font-semibold underline underline-offset-2">Reset</button>
           </div>
         )}
 
         {isAnalyzing && (
-          <div className="max-w-xl mx-auto my-20 bg-surface border border-border rounded-2xl p-8 text-center shadow-xl">
-            <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-slate-100 mb-2">Analyzing Video Biomechanics</h3>
-            <p className="text-xs text-slate-400 mb-6">{progressMessage}</p>
-            <div className="w-full bg-card h-2.5 rounded-full overflow-hidden border border-border">
-              <div className="bg-primary h-full transition-all duration-300" style={{ width: `${analysisProgress}%` }} />
+          <div className="panel mx-auto my-12 max-w-xl p-5 sm:my-20 sm:p-8">
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Analyzing running video</h3>
+                <p className="mt-1 text-xs text-slate-600">{progressMessage}</p>
+              </div>
             </div>
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-xs font-mono text-primary font-semibold">{analysisProgress}% Complete</span>
-              <button onClick={resetAnalysis} className="text-xs text-slate-300 underline underline-offset-2">Cancel analysis</button>
+            <div className="mt-5 h-1.5 w-full overflow-hidden bg-slate-100" role="progressbar" aria-valuenow={analysisProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Video analysis progress">
+              <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${analysisProgress}%` }} />
             </div>
-            <p className="text-[11px] text-slate-500 mt-4">
-              Samples at {SAMPLE_RATE_FPS} fps, up to {MAX_SAMPLED_FRAMES} frames (first {MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS} seconds).
-            </p>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="font-mono text-xs font-medium text-slate-600">{analysisProgress}%</span>
+              <button onClick={resetAnalysis} className="quiet-button min-h-8">Cancel analysis</button>
+            </div>
+            <p className="mt-3 text-[11px] text-slate-500">Sampling at {SAMPLE_RATE_FPS} frames/s, up to {MAX_SAMPLED_FRAMES} samples from the first {MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS} seconds.</p>
           </div>
         )}
 
         {report && videoUrl && !isAnalyzing && (
-          <div className="space-y-6">
-            <AnalysisQualityPanel quality={report.quality} />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {(["summary", "video", "charts", "symmetry"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                      activeTab === tab ? "bg-primary text-black shadow-lg" : "bg-surface border border-border text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {tab === "summary" && "Coaching Summary"}
-                    {tab === "video" && "Annotated Video Overlay"}
-                    {tab === "charts" && "Kinematic Charts"}
-                    {tab === "symmetry" && "Gait & Symmetry Breakdown"}
-                  </button>
-                ))}
+          <div className="space-y-5 pb-8">
+            <div className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="eyebrow">Analysis report</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">{videoFile?.name ?? "Running video"}</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {report.quality.analyzedStartSec.toFixed(1)}–{report.quality.analyzedEndSec.toFixed(1)} s analyzed
+                  <span className="px-2 text-slate-300">·</span>{report.quality.sampledFrames} sampled frames
+                  <span className="px-2 text-slate-300">·</span>{report.quality.samplingRateFps} samples/s
+                </p>
               </div>
-              <div className="flex items-center gap-3">
-                <button onClick={downloadCSVReport} className="px-3.5 py-2 rounded-xl bg-card border border-border hover:bg-border/50 text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                  <Download className="w-4 h-4 text-primary" /> Download Report
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={downloadReportPdf} className="primary-button min-h-9">
+                  <FileText className="h-4 w-4" /> Export PDF
                 </button>
-                <button onClick={resetAnalysis} className="px-3.5 py-2 rounded-xl bg-card border border-border hover:bg-border/50 text-xs font-semibold text-slate-400 hover:text-slate-200 flex items-center gap-1.5">
-                  <RefreshCw className="w-4 h-4" /> New Analysis
+                <button onClick={resetAnalysis} className="control-button">
+                  <RefreshCw className="h-4 w-4" /> New analysis
                 </button>
               </div>
             </div>
+            <AnalysisQualityPanel quality={report.quality} />
+            <div className="flex flex-col gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="Analysis report sections">
+                {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    aria-controls={`${tab}-report-panel`}
+                    id={`${tab}-report-tab`}
+                    className={`min-h-10 shrink-0 border-b-2 px-3 text-xs font-semibold transition-colors sm:px-4 ${
+                      activeTab === tab ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {tab === "summary" && "Summary"}
+                    {tab === "video" && "Video analysis"}
+                    {tab === "charts" && "Kinematics"}
+                    {tab === "symmetry" && "Gait & symmetry"}
+                    {tab === "guide" && "Metric guide"}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            {activeTab === "summary" && <div className="space-y-6"><ExecutiveSummary report={report} /><CoachingFeed report={report} /></div>}
-            {activeTab === "video" && <TelemetryPlayer videoUrl={videoUrl} frames={report.frames} kinematics={report.kinematics} fps={report.fps} />}
-            {activeTab === "charts" && <KinematicCharts report={report} />}
-            {activeTab === "symmetry" && <SymmetryBreakdown report={report} />}
+            {activeTab === "summary" && <div role="tabpanel" id="summary-report-panel" aria-labelledby="summary-report-tab" className="pt-2"><ExecutiveSummary report={report} /></div>}
+            {activeTab === "video" && <div role="tabpanel" id="video-report-panel" aria-labelledby="video-report-tab" className="pt-2"><TelemetryPlayer videoUrl={videoUrl} frames={report.frames} kinematics={report.kinematics} fps={report.fps} /></div>}
+            {activeTab === "charts" && <div role="tabpanel" id="charts-report-panel" aria-labelledby="charts-report-tab" className="pt-2"><KinematicCharts report={report} /></div>}
+            {activeTab === "symmetry" && <div role="tabpanel" id="symmetry-report-panel" aria-labelledby="symmetry-report-tab" className="pt-2"><SymmetryBreakdown report={report} /></div>}
+            {activeTab === "guide" && <div role="tabpanel" id="guide-report-panel" aria-labelledby="guide-report-tab" className="pt-2"><MetricGuide /></div>}
           </div>
         )}
       </main>
@@ -369,31 +380,26 @@ export default function Home() {
 
 function AnalysisQualityPanel({ quality }: { quality: AnalysisQuality }) {
   return (
-    <section className={`rounded-2xl border p-5 ${quality.sufficientForSummary ? "border-border bg-surface" : "border-warning/50 bg-warning/5"}`} aria-label="Analysis data quality">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="font-bold text-slate-100">Data quality & analysis coverage</h2>
-          <p className="text-sm text-slate-300 mt-1">{quality.message}</p>
+    <section className={`border px-4 py-3 ${quality.sufficientForSummary ? "border-border bg-surface" : "border-warning/40 bg-amber-50/60"}`} aria-label="Analysis data quality">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <h2 className="text-xs font-semibold text-slate-800">Data quality & coverage</h2>
         </div>
-        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${quality.sufficientForSummary ? "border-success/30 text-success" : "border-warning/30 text-warning"}`}>
-          {quality.sufficientForSummary ? "Complete core tracking" : "Incomplete core tracking"}
+        <span className={`shrink-0 text-[11px] font-semibold ${quality.sufficientForSummary ? "text-success" : "text-warning"}`}>
+          {quality.sufficientForSummary ? "Complete tracking" : "Incomplete tracking"}
         </span>
       </div>
-      <dl className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-xs">
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-xs sm:grid-cols-3 lg:grid-cols-5">
         <QualityValue label="Sampled frames" value={`${quality.sampledFrames}`} />
         <QualityValue label="Fully tracked" value={`${quality.trackedFrames}`} />
         <QualityValue label="Valid core tracking" value={`${quality.validTrackingPct}%`} />
         <QualityValue label="Mean landmark visibility" value={quality.meanLandmarkVisibility === null ? "Unavailable" : `${(quality.meanLandmarkVisibility * 100).toFixed(1)}%`} />
         <QualityValue label="Analyzed interval" value={`${quality.analyzedStartSec.toFixed(1)}–${quality.analyzedEndSec.toFixed(1)}s of ${quality.sourceDurationSec.toFixed(1)}s`} />
       </dl>
-      <p className="text-[11px] text-slate-500 mt-4">
-        MediaPipe visibility is the mean of exposed visibility values for core landmarks, not a model-accuracy score. Sampling: {quality.samplingRateFps} frames/s; maximum {MAX_SAMPLED_FRAMES} samples. Metrics identify whether they are landmark-derived, algorithmically estimated, heuristic, or unavailable.
-        The video is processed locally and not uploaded; MediaPipe scripts/model assets from jsDelivr and the Google Fonts stylesheet may generate third-party asset requests.
-      </p>
     </section>
   );
 }
 
 function QualityValue({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-slate-500">{label}</dt><dd className="font-mono font-semibold text-slate-200 mt-1">{value}</dd></div>;
+  return <div><dt className="text-slate-500">{label}</dt><dd className="mt-0.5 font-mono font-medium text-slate-800">{value}</dd></div>;
 }

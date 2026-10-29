@@ -1,68 +1,91 @@
 import React from "react";
-import { CompleteAnalysisReport, MetricResult } from "@/types/telemetry";
+import { CompleteAnalysisReport } from "@/types/telemetry";
 import { MetricValue } from "./MetricValue";
+import { getMetricComparisons, MetricComparison } from "@/lib/metricComparison";
 
 interface ExecutiveSummaryProps {
   report: CompleteAnalysisReport;
 }
 
-function averageAbsolute(values: (number | null)[]): number | null {
-  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + Math.abs(value), 0) / valid.length : null;
+function MetricComparisonCard({ comparison }: { comparison: MetricComparison }) {
+  const { scale } = comparison;
+  const observedPosition = scale
+    ? Math.min(100, Math.max(0, ((scale.observed - scale.minimum) / (scale.maximum - scale.minimum)) * 100))
+    : null;
+  const bandLeft = scale?.bandMinimum === undefined
+    ? null
+    : Math.min(100, Math.max(0, ((scale.bandMinimum - scale.minimum) / (scale.maximum - scale.minimum)) * 100));
+  const bandWidth = scale?.bandMinimum === undefined || scale.bandMaximum === undefined
+    ? null
+    : Math.min(100, Math.max(0, ((scale.bandMaximum - scale.bandMinimum) / (scale.maximum - scale.minimum)) * 100));
+
+  return (
+    <article className="min-w-0 border border-border bg-card p-4">
+      <h3 className="text-sm font-semibold text-slate-800">{comparison.label}</h3>
+      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
+        <div className="min-w-0">
+          <p className="metric-label">Observed</p>
+          <p className="metric-number mt-1 truncate text-xl">
+            <MetricValue metric={comparison.observed} digits={1} showProvenance={false} />
+          </p>
+          <p className="mt-1 text-[10px] font-medium capitalize text-slate-500">
+            {comparison.observed.status.replace(/-/g, " ")}
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="metric-label">App reference</p>
+          <p className="mt-1 text-sm font-semibold leading-snug text-slate-800">{comparison.reference}</p>
+          <p className="mt-1 text-[10px] font-medium leading-snug text-slate-500">{comparison.position}</p>
+        </div>
+      </div>
+      {observedPosition !== null && (
+        <div
+          className="relative mt-4 h-2 bg-slate-200"
+          role="img"
+          aria-label={`${comparison.label}: ${comparison.position}; reference ${comparison.reference}`}
+        >
+          {bandLeft !== null && bandWidth !== null && (
+            <span className="absolute inset-y-0 bg-primary/60" style={{ left: `${bandLeft}%`, width: `${bandWidth}%` }} />
+          )}
+          <span
+            className="absolute -top-1.5 h-5 w-0.5 bg-slate-900"
+            style={{ left: `${observedPosition}%` }}
+          />
+        </div>
+      )}
+      {scale && (
+        <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-500">
+          <span>{scale.minimum}</span>
+          <span>{scale.maximum}</span>
+        </div>
+      )}
+    </article>
+  );
 }
 
 export const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({ report }) => {
-  const { formScore, gait, symmetry, kinematics } = report;
-  const meanTrunk = averageAbsolute(kinematics.trunkImagePlaneAngles);
-  const cards: { label: string; value: MetricResult; color: string }[] = [
-    { label: "Estimated Cadence", value: gait.cadenceSpm, color: "text-primary" },
-    { label: "Ground Contact Time", value: gait.groundContactTimeMs, color: "text-cyan-400" },
-    { label: "Pelvis Vertical Range", value: gait.pelvisVerticalRangeBodyHeightPct, color: "text-amber-400" },
-    { label: "Ankle–Hip Image Offset", value: gait.ankleHipOffsetBodyHeightPct, color: "text-pink-400" },
-    { label: "Hip-Line Image Tilt", value: gait.maxHipLineImageTiltDeg, color: "text-purple-400" },
-    { label: "Knee-Angle Asymmetry", value: symmetry.kneeAngleAsymmetryPct, color: "text-emerald-400" },
-    { label: "Mean Trunk Image Angle", value: {
-      value: meanTrunk,
-      status: meanTrunk === null ? "unavailable" : "landmark-derived",
-      unit: "deg",
-      explanation: "Mean absolute angle relative to the image vertical; not a calibrated forward lean measurement.",
-    }, color: "text-slate-100" },
-    { label: "Stride Consistency Index", value: symmetry.strideConsistencyScore, color: "text-slate-100" },
-  ];
+  const comparisons = getMetricComparisons(report);
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-card to-surface rounded-2xl p-6 border border-border shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-6">
+    <section aria-label="Metric comparison" className="space-y-5">
+      <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="border-l-2 border-primary pl-4">
           <div>
-            <span className="text-xs font-bold text-primary tracking-wider uppercase">Exploratory Running Form Telemetry</span>
-            <h2 className="text-2xl font-extrabold text-slate-100 mt-1">Landmark-Derived Motion Summary</h2>
-            <p className="text-xs text-slate-400 mt-1">2D image-space estimates; camera geometry is uncalibrated.</p>
-          </div>
-          <div className="bg-surface/80 border border-border px-6 py-4 rounded-xl text-right">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Experimental Rule-Based Index</div>
-            <div className="text-4xl font-black text-success leading-none mt-1">
-              {formScore.overallScore.value === null ? "—" : formScore.overallScore.value}
-              <span className="text-sm font-normal text-slate-500"> / 100</span>
-            </div>
-            <div className="text-xs font-semibold text-primary mt-1">{formScore.category}</div>
-            <p className="text-[10px] text-slate-500 mt-1">{formScore.overallScore.status.replaceAll("-", " ")}</p>
+            <p className="metric-label">Experimental composite</p>
+            <p className="metric-number mt-0.5 text-3xl">
+              {report.formScore.overallScore.value === null ? "—" : report.formScore.overallScore.value}
+              <span className="ml-1 text-sm font-medium text-slate-500">/ 100</span>
+            </p>
           </div>
         </div>
-        <p className="text-xs text-slate-400 mt-5 border-t border-border pt-4">
-          This score uses demonstration rules, not a validated sports-science assessment. It is not medical advice or an injury-risk prediction.
-        </p>
+        <p className="eyebrow">Metric comparisons</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {cards.map(({ label, value, color }) => (
-          <div key={label} className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-            <div className="text-xs font-semibold text-slate-400 uppercase">{label}</div>
-            <div className={`text-xl font-black mt-2 ${color}`}><MetricValue metric={value} digits={1} /></div>
-            <div className="text-[10px] font-medium text-slate-500 mt-2">{value.explanation}</div>
-          </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {comparisons.map((comparison) => (
+          <MetricComparisonCard key={comparison.label} comparison={comparison} />
         ))}
       </div>
-    </div>
+    </section>
   );
 };

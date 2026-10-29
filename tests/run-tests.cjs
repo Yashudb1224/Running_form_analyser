@@ -27,12 +27,13 @@ try {
     "src/lib/signalProcessor.ts",
     "src/lib/symmetryAnalyzer.ts",
     "src/lib/formScorer.ts",
-    "src/lib/csvReport.ts",
+    "src/lib/pdfReport.ts",
     "src/lib/poseEstimator.ts",
   ], { cwd: root, stdio: "inherit" });
 
   execFileSync(process.execPath, ["--test", path.join(output, "tests", "analysis.test.js")], {
     cwd: root,
+    env: { ...process.env, NODE_PATH: path.join(root, "node_modules") },
     stdio: "inherit",
   });
 } finally {

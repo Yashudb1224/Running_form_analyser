@@ -1,5 +1,14 @@
 import { FormScoreData, GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
 
+export const POSTURE_DEMO_REFERENCE = { minimumDeg: 3, maximumDeg: 10 } as const;
+
+export function getCadenceDemoScoreBand(cadence: number) {
+  if (cadence < 155) return { label: "<155 steps/min", score: 70, minimum: 120, maximum: 155 };
+  if (cadence < 165) return { label: "155-<165 steps/min", score: 85, minimum: 155, maximum: 165 };
+  if (cadence <= 185) return { label: "165-185 steps/min", score: 100, minimum: 165, maximum: 185 };
+  return { label: ">185 steps/min", score: 92, minimum: 185, maximum: 210 };
+}
+
 function average(values: (number | null)[]): number | null {
   const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
   return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
@@ -25,7 +34,7 @@ export function calculateFormScore(
   const cadenceScore = cadence === null
     ? unavailable("Cadence is unavailable because gait events were insufficient.")
     : metric(
-      cadence >= 165 && cadence <= 185 ? 100 : cadence >= 155 && cadence < 165 ? 85 : cadence < 155 ? 70 : 92,
+      getCadenceDemoScoreBand(cadence).score,
       "heuristic-estimate",
       "%",
       "Demonstration rule using the existing cadence bands; not an individualized or validated target."
@@ -33,16 +42,16 @@ export function calculateFormScore(
   const postureScore = meanImageLean === null
     ? unavailable("A valid shoulder and hip midpoint was not available.")
     : metric(
-      meanImageLean >= 3 && meanImageLean <= 10
+      meanImageLean >= POSTURE_DEMO_REFERENCE.minimumDeg && meanImageLean <= POSTURE_DEMO_REFERENCE.maximumDeg
         ? 100
-        : meanImageLean < 3
+        : meanImageLean < POSTURE_DEMO_REFERENCE.minimumDeg
           ? 80
           : meanImageLean <= 15
             ? 82
             : 70,
       "heuristic-estimate",
       "%",
-      "Demonstration rule using the existing 3–10 degree posture band on mean absolute image-plane angle; camera orientation is not calibrated."
+      `Demonstration scoring band: ${POSTURE_DEMO_REFERENCE.minimumDeg}-${POSTURE_DEMO_REFERENCE.maximumDeg} degrees mean absolute image-plane angle; not a validated posture target.`
     );
   const efficiency = unavailable("A calibrated efficiency score cannot be derived from this 2D video analysis.");
   const requiredScores = [
@@ -78,14 +87,12 @@ export function calculateFormScore(
 
   const observations = [
     cadence === null
-      ? "Cadence is unavailable: too few valid ankle trajectory events were detected."
-      : `Estimated cadence: ${cadence.toFixed(1)} steps/min, derived from tracked ankle trajectory events.`,
+      ? "Cadence: unavailable."
+      : `Estimated cadence: ${cadence.toFixed(1)} steps/min.`,
     meanImageLean === null
-      ? "Trunk image-plane angle is unavailable because required shoulder or hip landmarks were missing."
-      : `Mean absolute trunk angle in the image plane: ${meanImageLean.toFixed(1)}°. Camera orientation is not calibrated.`,
-    `Knee-angle asymmetry index: ${symmetry.kneeAngleAsymmetryPct.value === null ? "unavailable" : `${symmetry.kneeAngleAsymmetryPct.value.toFixed(1)}%`}. This compares paired 2D landmark-derived knee angles.`,
-    "Ground-contact time and flight time are not measured and are excluded from scoring.",
-    "All rule-based scores are for demonstration only; they are not clinical, injury-risk, or performance diagnoses.",
+      ? "Mean trunk image angle: unavailable."
+      : `Mean trunk image angle: ${meanImageLean.toFixed(1)} deg.`,
+    `Knee-angle asymmetry: ${symmetry.kneeAngleAsymmetryPct.value === null ? "unavailable" : `${symmetry.kneeAngleAsymmetryPct.value.toFixed(1)}%`}.`,
   ];
 
   return {

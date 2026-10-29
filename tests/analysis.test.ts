@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculate2DAngle, calculatePelvicTilt, computeSequenceKinematics } from "../src/lib/biomechanics";
 import { analyzeGaitCycles, findPeaks } from "../src/lib/gaitCycle";
-import { calculateFormScore } from "../src/lib/formScorer";
-import { metricCsvRow } from "../src/lib/csvReport";
+import { calculateFormScore, getCadenceDemoScoreBand } from "../src/lib/formScorer";
+import { getMetricComparisons } from "../src/lib/metricComparison";
+import { createPdfReport, formatPdfMetric } from "../src/lib/pdfReport";
 import { evaluateSymmetryAndConsistency } from "../src/lib/symmetryAnalyzer";
 import { convertMediaPipeLandmarks, createUnavailableFrame, hasCompleteTrackingCoverage } from "../src/lib/poseEstimator";
 import { GaitMetrics, KinematicSequence, Landmark, metric, unavailableMetric } from "../src/types/telemetry";
@@ -151,13 +152,108 @@ test("the composite remains unavailable below the tracking-quality gate", () => 
   assert.equal(score.subScores.posture.value, 100);
 });
 
-test("CSV rows retain unavailable and estimated metric statuses", () => {
+test("PDF values preserve unavailable and estimated metric values", () => {
   assert.equal(
-    metricCsvRow("Cadence", unavailableMetric("steps/min", "not enough events")),
-    '"Cadence","Unavailable","unavailable (steps/min)"'
+    formatPdfMetric(unavailableMetric("steps/min", "not enough events")),
+    "Unavailable"
   );
   assert.equal(
-    metricCsvRow("Cadence", { value: 172, status: "algorithmically-estimated", unit: "steps/min", explanation: "test" }),
-    '"Cadence","172","algorithmically-estimated (steps/min)"'
+    formatPdfMetric({ value: 172, status: "algorithmically-estimated", unit: "steps/min", explanation: "test" }),
+    "172 steps/min"
   );
+});
+
+test("metric comparisons reuse app scoring rules without inventing image-metric targets", () => {
+  assert.equal(getCadenceDemoScoreBand(154.9).score, 70);
+  assert.equal(getCadenceDemoScoreBand(155).score, 85);
+  assert.equal(getCadenceDemoScoreBand(165).score, 100);
+  assert.equal(getCadenceDemoScoreBand(185).score, 100);
+  assert.equal(getCadenceDemoScoreBand(185.1).score, 92);
+
+  const kinematics = emptyKinematics(2);
+  kinematics.trunkImagePlaneAngles = [8, -9];
+  const unavailableGait = analyzeGaitCycles([], [], [], kinematics, []);
+  const gait = {
+    ...unavailableGait,
+    cadenceSpm: metric(159, "algorithmically-estimated", "steps/min", "test"),
+    stepTimeCvPct: metric(49, "algorithmically-estimated", "%", "test"),
+  };
+  const unavailableSymmetry = evaluateSymmetryAndConsistency(kinematics, gait);
+  const symmetry = {
+    ...unavailableSymmetry,
+    kneeAngleAsymmetryPct: metric(15.6, "algorithmically-estimated", "%", "test"),
+    kneeAngleSymmetryScore: metric(84, "heuristic-estimate", "%", "test"),
+    strideConsistencyScore: metric(51, "heuristic-estimate", "%", "test"),
+  };
+  const formScore = calculateFormScore(kinematics, gait, symmetry, true);
+  const report = {
+    totalFrames: 2,
+    fps: 10,
+    durationSec: 1,
+    videoWidth: 640,
+    videoHeight: 480,
+    frames: [createUnavailableFrame(0, 0), createUnavailableFrame(1, 0.1)],
+    kinematics,
+    gait,
+    symmetry,
+    formScore,
+    quality: {
+      sampledFrames: 2,
+      trackedFrames: 2,
+      validTrackingPct: 100,
+      meanLandmarkVisibility: 0.9,
+      analyzedStartSec: 0,
+      analyzedEndSec: 0.1,
+      samplingRateFps: 10,
+      sourceDurationSec: 1,
+      sufficientForSummary: true,
+      message: "Sufficient tracking",
+    },
+  };
+  const comparisons = getMetricComparisons(report);
+
+  assert.equal(comparisons.length, 8);
+  assert.equal(comparisons[0].reference, "155-<165 steps/min");
+  assert.equal(comparisons[0].position, "App rule score: 85/100");
+  assert.equal(comparisons[2].reference, "No app reference band");
+  assert.equal(comparisons[5].observed.value, 8.5);
+  assert.equal(comparisons[5].position, "Within app score band");
+  assert.equal(comparisons[6].position, "Rule score: 51/100");
+});
+
+test("PDF report contains a structured summary and kinematic-trace pages", () => {
+  const kinematics = emptyKinematics(2);
+  const gait = analyzeGaitCycles([], [], [], kinematics, []);
+  const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
+  const formScore = calculateFormScore(kinematics, gait, symmetry, false);
+  const frames = [createUnavailableFrame(0, 0), createUnavailableFrame(1, 0.1)];
+  const pdf = createPdfReport({
+    totalFrames: frames.length,
+    fps: 10,
+    durationSec: 1,
+    videoWidth: 640,
+    videoHeight: 480,
+    frames,
+    kinematics,
+    gait,
+    symmetry,
+    formScore,
+    quality: {
+      sampledFrames: 2,
+      trackedFrames: 0,
+      validTrackingPct: 0,
+      meanLandmarkVisibility: null,
+      analyzedStartSec: 0,
+      analyzedEndSec: 0.1,
+      samplingRateFps: 10,
+      sourceDurationSec: 1,
+      sufficientForSummary: false,
+      message: "Incomplete tracking",
+    },
+  }, "test.mp4");
+  assert.equal(pdf.getNumberOfPages(), 2);
+  const output = pdf.output();
+  assert.ok(output.length > 1000);
+  assert.ok(output.includes("METRIC COMPARISON"));
+  assert.ok(output.includes("No app reference band"));
 });
