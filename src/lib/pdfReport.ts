@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { CompleteAnalysisReport, MetricResult, metric } from "../types/telemetry";
 import { getMetricComparisons } from "./metricComparison";
+import { REFERENCE_RANGES } from "./researchReferences";
 
 const PAGE_WIDTH = 210;
 const LEFT = 16;
@@ -117,27 +118,34 @@ function drawFooter(doc: jsPDF, page: number, total: number) {
   doc.text(`${page} / ${total}`, RIGHT, pageHeight - 7, { align: "right" });
 }
 
-function scoreComponentRows(report: CompleteAnalysisReport): Array<[string, string, string]> {
-  const { formScore } = report;
-  return [
-    metricRow("Symmetry score component", formScore.subScores.symmetry),
-    metricRow("Consistency score component", formScore.subScores.consistency),
-    metricRow("Cadence score component", formScore.subScores.cadence),
-    metricRow("Posture score component", formScore.subScores.posture),
-    metricRow("Efficiency score component", formScore.subScores.efficiency),
-  ];
-}
-
 function additionalMetricRows(report: CompleteAnalysisReport): Array<[string, string, string]> {
   const { gait, symmetry } = report;
   return [
     metricRow("Mean step interval", gait.avgStepTimeSec),
-    metricRow("Elbow-angle comparison", symmetry.elbowAngleSimilarityPct),
-    metricRow("Left maximum internal knee angle", symmetry.kneeAngleMaxLeftDeg),
-    metricRow("Right maximum internal knee angle", symmetry.kneeAngleMaxRightDeg),
-    metricRow("Left minimum internal knee angle", symmetry.kneeAngleMinLeftDeg),
-    metricRow("Right minimum internal knee angle", symmetry.kneeAngleMinRightDeg),
+    metricRow("Left midstance knee flexion", gait.left.midstanceKneeFlexionDeg),
+    metricRow("Right midstance knee flexion", gait.right.midstanceKneeFlexionDeg),
+    metricRow("Left foot-strike shank angle", gait.left.footStrikeShankAngleDeg),
+    metricRow("Right foot-strike shank angle", gait.right.footStrikeShankAngleDeg),
+    metricRow("Step-time symmetry index", symmetry.stepTimeSymmetryIndexPct),
   ];
+}
+
+function writeReferences(doc: jsPDF, y: number, bottom: number): number {
+  const citations = new Map<string, string>();
+  for (const reference of Object.values(REFERENCE_RANGES)) {
+    for (const citation of reference.citations) citations.set(citation.short, citation.full);
+  }
+  y = writeSectionTitle(doc, "REFERENCES", y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  setTextColor(doc, COLORS.muted);
+  for (const full of citations.values()) {
+    const lines = doc.splitTextToSize(cleanText(full), CONTENT_WIDTH) as string[];
+    if (y + lines.length * 2.9 > bottom) break;
+    doc.text(lines, LEFT, y);
+    y += lines.length * 2.9 + 1.2;
+  }
+  return y;
 }
 
 function writeComparisonTable(doc: jsPDF, report: CompleteAnalysisReport, y: number): number {
@@ -153,7 +161,7 @@ function writeComparisonTable(doc: jsPDF, report: CompleteAnalysisReport, y: num
   setTextColor(doc, COLORS.muted);
   doc.text("METRIC", LEFT, y);
   doc.text("OBSERVED", observedX, y);
-  doc.text("APP REFERENCE", referenceX, y);
+  doc.text("RESEARCH REFERENCE", referenceX, y);
   doc.text("POSITION", positionX, y);
   setDrawColor(doc, COLORS.border);
   doc.line(LEFT, y + 2.2, RIGHT, y + 2.2);
@@ -161,8 +169,11 @@ function writeComparisonTable(doc: jsPDF, report: CompleteAnalysisReport, y: num
 
   for (const comparison of getMetricComparisons(report)) {
     const observed = doc.splitTextToSize(cleanText(formatPdfMetric(comparison.observed)), observedWidth) as string[];
-    const reference = doc.splitTextToSize(cleanText(comparison.reference), referenceWidth) as string[];
-    const position = doc.splitTextToSize(cleanText(comparison.position), positionWidth) as string[];
+    const reference = doc.splitTextToSize(cleanText(comparison.referenceText), referenceWidth) as string[];
+    const positionLabel = comparison.score?.value != null
+      ? `${comparison.positionText} | ${comparison.score.value}/100`
+      : comparison.positionText;
+    const position = doc.splitTextToSize(cleanText(positionLabel), positionWidth) as string[];
     const rowHeight = Math.max(7, Math.max(observed.length, reference.length, position.length) * 3.2 + 3.2);
 
     doc.setFont("helvetica", "normal");
@@ -269,25 +280,22 @@ export function createPdfReport(report: CompleteAnalysisReport, sourceName: stri
     ["Mean landmark visibility", report.quality.meanLandmarkVisibility === null ? "Unavailable" : `${(report.quality.meanLandmarkVisibility * 100).toFixed(1)}%`, "MediaPipe visibility"],
     ["Sampling", `${report.quality.samplingRateFps} samples/s`, `${report.quality.sampledFrames} samples`],
     ["Analyzed interval", `${report.quality.analyzedStartSec.toFixed(2)}-${report.quality.analyzedEndSec.toFixed(2)} s`, `Source ${report.quality.sourceDurationSec.toFixed(2)} s`],
-    ["Composite gate", report.quality.sufficientForSummary ? "Complete core tracking" : "Incomplete core tracking", report.quality.sufficientForSummary ? "Met" : "Not met"],
+    ["Camera view", report.quality.cameraView.replace(/-/g, " "), report.quality.bodyWidthRatio === null ? "Unavailable" : `Width ratio ${report.quality.bodyWidthRatio}`],
+    ["Detected steps", `${report.gait.stepCount}`, report.quality.facingDirection === null ? "Direction unknown" : report.quality.facingDirection === 1 ? "Running left to right" : "Running right to left"],
+    ["Composite gate", report.quality.sufficientForSummary ? "Requirements met" : "Requirements not met", report.quality.sufficientForSummary ? "Met" : "Not met"],
   ];
   y = writeTable(doc, qualityRows, y, [76, 43]);
   y += 5;
-  y = writeSectionTitle(doc, "EXPERIMENTAL COMPOSITE", y);
+  y = writeSectionTitle(doc, "COMPOSITE FORM SCORE", y);
   y = writeTable(doc, [metricRow("Composite score", report.formScore.overallScore)], y, [94, 43]);
   y += 3;
   y = writeSectionTitle(doc, "METRIC COMPARISON", y);
   y = writeComparisonTable(doc, report, y);
   y += 3;
-  y = writeSectionTitle(doc, "RULE-SCORE COMPONENTS", y);
-  y = writeTable(doc, scoreComponentRows(report), y, [94, 43]);
-  y += 3;
-  y = writeSectionTitle(doc, "ADDITIONAL MEASUREMENTS", y);
+  y = writeSectionTitle(doc, "PER-LEG MEASUREMENTS", y);
   y = writeTable(doc, additionalMetricRows(report), y, [94, 43]);
 
-  const notes = report.formScore.observations.filter(
-    (note) => !note.startsWith("All rule-based scores") && !note.startsWith("Ground-contact time")
-  );
+  const notes = [...report.quality.warnings, ...report.formScore.observations];
   const noteY = Math.min(y + 5, pageHeight - 42);
   if (notes.length && y < pageHeight - 38) {
     y = writeSectionTitle(doc, "SESSION NOTES", noteY);
@@ -320,7 +328,7 @@ export function createPdfReport(report: CompleteAnalysisReport, sourceName: stri
       series: [
         { label: "Left hip", values: report.kinematics.leftHipAngles, color: COLORS.accent },
         { label: "Right hip", values: report.kinematics.rightHipAngles, color: COLORS.second },
-        { label: "Trunk image angle", values: report.kinematics.trunkImagePlaneAngles, color: COLORS.muted },
+        { label: "Forward trunk lean", values: report.kinematics.trunkForwardLeanAngles, color: COLORS.muted },
       ],
     },
     {
@@ -333,13 +341,14 @@ export function createPdfReport(report: CompleteAnalysisReport, sourceName: stri
     },
   ];
   for (const chart of charts) {
-    y = drawMetricChart(doc, chart.title, chart.series, times, y, 56);
+    y = drawMetricChart(doc, chart.title, chart.series, times, y, 46);
     y += 4;
   }
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
   setTextColor(doc, COLORS.muted);
-  doc.text("X axis: source video time (s) | Y axis: image-space angle (deg)", LEFT, Math.min(y + 1, pageHeight - 16));
+  doc.text("X axis: source video time (s) | Y axis: image-space angle (deg)", LEFT, y + 1);
+  writeReferences(doc, y + 9, pageHeight - 15);
   drawFooter(doc, 2, 2);
   return doc;
 }

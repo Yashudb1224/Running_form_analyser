@@ -2,15 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-html {
+:root {
   color-scheme: light;
+  --background: 244 245 247;
+  --surface: 255 255 255;
+  --card: 248 249 251;
+  --subtle: 240 242 245;
+  --border: 226 229 234;
+  --border-strong: 196 202 211;
+  --ink: 19 33 58;
+  --body: 55 67 84;
+  --muted: 95 107 122;
+  --primary: 30 58 95;
+  --primary-hover: 22 45 74;
+  --on-primary: 255 255 255;
+  --secondary: 79 107 138;
+  --success: 47 115 86;
+  --warning: 168 108 18;
+  --danger: 169 68 59;
+  --leg-left: 47 93 138;
+  --leg-right: 185 115 63;
+  --shadow: 19 33 58;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: 13 18 27;
+  --surface: 21 28 40;
+  --card: 26 34 49;
+  --subtle: 32 41 57;
+  --border: 42 52 70;
+  --border-strong: 64 76 97;
+  --ink: 232 237 244;
+  --body: 196 204 216;
+  --muted: 139 150 166;
+  --primary: 128 168 216;
+  --primary-hover: 153 187 228;
+  --on-primary: 12 20 33;
+  --secondary: 140 165 194;
+  --success: 98 180 141;
+  --warning: 220 165 80;
+  --danger: 226 122 112;
+  --leg-left: 122 166 214;
+  --leg-right: 222 160 112;
+  --shadow: 0 0 0;
 }
 
 body {
   min-width: 320px;
   overflow-x: hidden;
-  background: #f3f1ec;
-  color: #202a33;
+  background: rgb(var(--background));
+  color: rgb(var(--body));
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -25,13 +67,13 @@ input {
 button:focus-visible,
 input:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid #2d6598;
+  outline: 2px solid rgb(var(--primary));
   outline-offset: 2px;
 }
 
 ::selection {
-  background: #d7e5f1;
-  color: #172a3a;
+  background: rgb(var(--primary) / 0.2);
+  color: rgb(var(--ink));
 }
 
 ::-webkit-scrollbar {
@@ -40,58 +82,62 @@ input:focus-visible,
 }
 
 ::-webkit-scrollbar-track {
-  background: #eef1f3;
+  background: rgb(var(--subtle));
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 2px solid #eef1f3;
+  border: 2px solid rgb(var(--subtle));
   border-radius: 8px;
-  background: #b7c1c9;
+  background: rgb(var(--border-strong));
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #8d9ba6;
+  background: rgb(var(--muted));
 }
 
 @layer components {
   .app-shell {
-    @apply min-h-screen bg-background text-slate-800;
+    @apply min-h-screen bg-background text-body;
   }
 
   .panel {
-    @apply border border-border bg-surface;
+    @apply rounded-xl border border-border bg-surface shadow-card;
   }
 
   .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500;
+    @apply text-[11px] font-semibold uppercase tracking-[0.1em] text-muted;
   }
 
   .section-title {
-    @apply text-base font-semibold tracking-tight text-slate-800;
+    @apply text-base font-semibold tracking-tight text-ink;
   }
 
   .metric-label {
-    @apply text-xs font-medium text-slate-500;
+    @apply text-xs font-medium text-muted;
   }
 
   .metric-number {
-    @apply font-mono font-semibold tracking-tight text-slate-900;
+    @apply font-semibold tracking-tight text-ink;
   }
 
   .control-button {
-    @apply inline-flex min-h-9 items-center justify-center gap-2 border border-border bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50;
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-body transition-colors hover:border-border-strong hover:bg-subtle;
   }
 
   .primary-button {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-[#245783];
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary-hover;
   }
 
   .quiet-button {
-    @apply inline-flex min-h-9 items-center justify-center gap-2 px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100;
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium text-body transition-colors hover:bg-subtle;
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold;
   }
 
   .chart-panel {
-    @apply border-b border-border py-6 first:border-t;
+    @apply rounded-xl border border-border bg-surface p-4 shadow-card sm:p-5;
   }
 }
 

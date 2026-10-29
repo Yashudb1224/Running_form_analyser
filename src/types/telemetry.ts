@@ -26,6 +26,9 @@ export interface FramePose {
   meanVisibility: number | null;
 }
 
+/** +1 when the runner faces the +x image direction (to the right), -1 when facing left. */
+export type FacingDirection = 1 | -1;
+
 export interface KinematicSequence {
   leftKneeAngles: (number | null)[];
   rightKneeAngles: (number | null)[];
@@ -34,11 +37,34 @@ export interface KinematicSequence {
   leftElbowAngles: (number | null)[];
   rightElbowAngles: (number | null)[];
   trunkImagePlaneAngles: (number | null)[];
+  /** Trunk angle from vertical, positive when leaning in the running direction. */
+  trunkForwardLeanAngles: (number | null)[];
   hipLineImageTiltAngles: (number | null)[];
   leftAnkleY: (number | null)[];
   rightAnkleY: (number | null)[];
   pelvisCenterY: (number | null)[];
   torsoHeightPx: (number | null)[];
+  facingDirection: FacingDirection | null;
+}
+
+export interface FootStrikeEvent {
+  leg: "left" | "right";
+  /** Frame index of the stance peak (lowest ankle position in the image). */
+  stanceFrame: number;
+  /** Sub-frame interpolated stance-peak time in seconds. */
+  stanceTime: number;
+  /** Approximate initial-contact frame: first stance-window frame before the peak. */
+  strikeFrame: number;
+  shankAngleDeg: number | null;
+  ankleAheadOfHipPct: number | null;
+  midstanceKneeFlexionDeg: number | null;
+}
+
+export interface LegSummary {
+  midstanceKneeFlexionDeg: MetricResult;
+  footStrikeShankAngleDeg: MetricResult;
+  stepTimeSec: MetricResult;
+  events: number;
 }
 
 export interface GaitMetrics {
@@ -47,24 +73,30 @@ export interface GaitMetrics {
   groundContactTimeMs: MetricResult;
   flightTimeMs: MetricResult;
   dutyFactorPct: MetricResult;
-  pelvisVerticalRangeBodyHeightPct: MetricResult;
-  ankleHipOffsetBodyHeightPct: MetricResult;
+  verticalOscillationTorsoPct: MetricResult;
+  ankleAheadOfHipTorsoPct: MetricResult;
+  footStrikeShankAngleDeg: MetricResult;
+  midstanceKneeFlexionDeg: MetricResult;
   maxHipLineImageTiltDeg: MetricResult;
   stepTimeCvPct: MetricResult;
-  stancePct: MetricResult;
-  swingPct: MetricResult;
+  stepCount: number;
+  events: FootStrikeEvent[];
+  left: LegSummary;
+  right: LegSummary;
   leftContacts: number[];
   rightContacts: number[];
 }
 
 export interface SymmetryMetrics {
-  kneeAngleSymmetryScore: MetricResult;
-  strideConsistencyScore: MetricResult;
+  symmetryScore: MetricResult;
+  consistencyScore: MetricResult;
+  kneeFlexionSymmetryIndexPct: MetricResult;
+  stepTimeSymmetryIndexPct: MetricResult;
+  shankAngleDifferenceDeg: MetricResult;
   kneeAngleMaxLeftDeg: MetricResult;
   kneeAngleMaxRightDeg: MetricResult;
   kneeAngleMinLeftDeg: MetricResult;
   kneeAngleMinRightDeg: MetricResult;
-  kneeAngleAsymmetryPct: MetricResult;
   elbowAngleSimilarityPct: MetricResult;
 }
 
@@ -73,13 +105,16 @@ export interface FormScoreData {
   category: string;
   observations: string[];
   subScores: {
+    cadence: MetricResult;
+    footStrike: MetricResult;
+    kneeFlexion: MetricResult;
+    posture: MetricResult;
     symmetry: MetricResult;
     consistency: MetricResult;
-    cadence: MetricResult;
-    posture: MetricResult;
-    efficiency: MetricResult;
   };
 }
+
+export type CameraView = "side" | "oblique" | "front-or-back" | "unknown";
 
 export interface AnalysisQuality {
   sampledFrames: number;
@@ -90,8 +125,13 @@ export interface AnalysisQuality {
   analyzedEndSec: number;
   samplingRateFps: number;
   sourceDurationSec: number;
+  cameraView: CameraView;
+  /** Median shoulder/hip horizontal separation relative to torso length; small in a side view. */
+  bodyWidthRatio: number | null;
+  facingDirection: FacingDirection | null;
   sufficientForSummary: boolean;
   message: string;
+  warnings: string[];
 }
 
 export interface CompleteAnalysisReport {

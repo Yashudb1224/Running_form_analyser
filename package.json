@@ -10,8 +10,8 @@
     "test": "node tests/run-tests.cjs"
   },
   "dependencies": {
-    "@mediapipe/camera_utils": "latest",
-    "@mediapipe/pose": "latest",
+    "@mediapipe/camera_utils": "0.3.1675466862",
+    "@mediapipe/pose": "0.5.1675469404",
     "canvas-confetti": "^1.9.3",
     "clsx": "^2.1.1",
     "jspdf": "^4.2.1",

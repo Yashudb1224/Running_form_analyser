@@ -23,7 +23,10 @@ interface MediaPipePoseConstructor {
   new (options: { locateFile: (file: string) => string }): MediaPipePoseInstance;
 }
 
-const POSE_SCRIPT = "https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js";
+// Pinned so model behaviour cannot change underneath the analysis between visits.
+const POSE_VERSION = "0.5.1675469404";
+const POSE_BASE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/pose@${POSE_VERSION}`;
+const POSE_SCRIPT = `${POSE_BASE_URL}/pose.js`;
 const CORE_LANDMARKS = [11, 12, 23, 24, 25, 26, 27, 28];
 
 export class BrowserPoseEstimator {
@@ -41,7 +44,7 @@ export class BrowserPoseEstimator {
     if (!PoseClass) throw new Error("MediaPipe Pose did not register after its script loaded.");
 
     const pose = new PoseClass({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+      locateFile: (file) => `${POSE_BASE_URL}/${file}`,
     });
     this.poseInstance = pose;
     pose.setOptions({
@@ -149,6 +152,9 @@ export function createUnavailableFrame(frameIdx: number, timestamp: number): Fra
   };
 }
 
-export function hasCompleteTrackingCoverage(frames: FramePose[]): boolean {
-  return frames.length > 0 && frames.every((frame) => frame.tracked);
+/** Minimum share of sampled frames with all core landmarks visible before an overall score is given. */
+export const MIN_TRACKING_COVERAGE = 0.85;
+
+export function hasSufficientTrackingCoverage(frames: FramePose[]): boolean {
+  return frames.length > 0 && frames.filter((frame) => frame.tracked).length / frames.length >= MIN_TRACKING_COVERAGE;
 }

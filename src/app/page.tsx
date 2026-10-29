@@ -13,10 +13,12 @@ import { computeSequenceKinematics } from "@/lib/biomechanics";
 import { analyzeGaitCycles } from "@/lib/gaitCycle";
 import { evaluateSymmetryAndConsistency } from "@/lib/symmetryAnalyzer";
 import { calculateFormScore } from "@/lib/formScorer";
-import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame, hasCompleteTrackingCoverage } from "@/lib/poseEstimator";
-import { FileText, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
+import { buildAnalysisQuality } from "@/lib/analysisQuality";
+import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
+import { FileText, RefreshCw, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 
-const SAMPLE_RATE_FPS = 10;
+// A running step lasts ~0.3 s, so 30 samples/s are needed to time steps and catch foot strike.
+const SAMPLE_RATE_FPS = 30;
 const MAX_SAMPLED_FRAMES = 600;
 const METADATA_TIMEOUT_MS = 15000;
 const SEEK_TIMEOUT_MS = 5000;
@@ -173,30 +175,6 @@ export default function Home() {
       estimatorRef.current = null;
       estimator = null;
 
-      const trackedFrames = frames.filter((frame) => frame.tracked).length;
-      const validTrackingPct = frames.length ? (trackedFrames / frames.length) * 100 : 0;
-      const visibilities = frames
-        .map((frame) => frame.meanVisibility)
-        .filter((value): value is number => value !== null && Number.isFinite(value));
-      const meanLandmarkVisibility = visibilities.length
-        ? visibilities.reduce((sum, value) => sum + value, 0) / visibilities.length
-        : null;
-      const sufficientForSummary = hasCompleteTrackingCoverage(frames);
-      const quality: AnalysisQuality = {
-        sampledFrames: frames.length,
-        trackedFrames,
-        validTrackingPct: Math.round(validTrackingPct * 10) / 10,
-        meanLandmarkVisibility: meanLandmarkVisibility === null ? null : Math.round(meanLandmarkVisibility * 1000) / 1000,
-        analyzedStartSec: frames[0]?.timestamp ?? 0,
-        analyzedEndSec: frames[frames.length - 1]?.timestamp ?? 0,
-        samplingRateFps: SAMPLE_RATE_FPS,
-        sourceDurationSec: duration,
-        sufficientForSummary,
-        message: sufficientForSummary
-          ? "All sampled frames met the core-landmark visibility threshold. Individual metrics may still be unavailable."
-          : "Composite score withheld: every sampled frame must meet the core-landmark visibility threshold. Individual metrics may still be unavailable.",
-      };
-
       setProgressMessage("Calculating landmark-derived metrics…");
       const kinematics = computeSequenceKinematics(frames);
       const gait = analyzeGaitCycles(
@@ -206,8 +184,12 @@ export default function Home() {
         kinematics,
         frames
       );
+      const quality = buildAnalysisQuality(frames, kinematics, gait, {
+        samplingRateFps: SAMPLE_RATE_FPS,
+        sourceDurationSec: duration,
+      });
       const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
-      const formScore = calculateFormScore(kinematics, gait, symmetry, sufficientForSummary);
+      const formScore = calculateFormScore(kinematics, gait, symmetry, quality.sufficientForSummary);
       const compiledReport: CompleteAnalysisReport = {
         totalFrames: frames.length,
         fps: SAMPLE_RATE_FPS,
@@ -289,11 +271,17 @@ export default function Home() {
   return (
     <div className="app-shell pb-12">
       <Header />
-      <main className="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
-        {!videoFile && !isAnalyzing && <VideoUploader onVideoSelected={handleVideoSelected} />}
+      <main className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
+        {!videoFile && !isAnalyzing && (
+          <VideoUploader
+            onVideoSelected={handleVideoSelected}
+            samplingRateFps={SAMPLE_RATE_FPS}
+            maxAnalyzedSeconds={MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS}
+          />
+        )}
 
         {errorMessage && (
-          <div role="alert" className="my-6 flex items-start gap-3 border border-danger/30 bg-red-50 p-4 text-sm text-red-900">
+          <div role="alert" className="my-6 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-ink">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
             <div className="flex-1"><strong>Analysis could not continue.</strong> {errorMessage}</div>
             <button onClick={resetAnalysis} className="text-xs font-semibold underline underline-offset-2">Reset</button>
@@ -305,31 +293,31 @@ export default function Home() {
             <div className="flex items-start gap-3">
               <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
               <div>
-                <h3 className="text-base font-semibold text-slate-900">Analyzing running video</h3>
-                <p className="mt-1 text-xs text-slate-600">{progressMessage}</p>
+                <h3 className="text-base font-semibold text-ink">Analysing running video</h3>
+                <p className="mt-1 text-xs text-body">{progressMessage}</p>
               </div>
             </div>
-            <div className="mt-5 h-1.5 w-full overflow-hidden bg-slate-100" role="progressbar" aria-valuenow={analysisProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Video analysis progress">
-              <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${analysisProgress}%` }} />
+            <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-subtle" role="progressbar" aria-valuenow={analysisProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Video analysis progress">
+              <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${analysisProgress}%` }} />
             </div>
             <div className="mt-2 flex items-center justify-between">
-              <span className="font-mono text-xs font-medium text-slate-600">{analysisProgress}%</span>
+              <span className="text-xs font-medium tabular-nums text-body">{analysisProgress}%</span>
               <button onClick={resetAnalysis} className="quiet-button min-h-8">Cancel analysis</button>
             </div>
-            <p className="mt-3 text-[11px] text-slate-500">Sampling at {SAMPLE_RATE_FPS} frames/s, up to {MAX_SAMPLED_FRAMES} samples from the first {MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS} seconds.</p>
+            <p className="mt-3 text-[11px] text-muted">Sampling at {SAMPLE_RATE_FPS} frames/s, up to {MAX_SAMPLED_FRAMES} samples from the first {MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS} seconds.</p>
           </div>
         )}
 
         {report && videoUrl && !isAnalyzing && (
           <div className="space-y-5 pb-8">
-            <div className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-end sm:justify-between">
-              <div>
+            <div className="flex flex-col gap-3 pt-8 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0">
                 <p className="eyebrow">Analysis report</p>
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">{videoFile?.name ?? "Running video"}</h2>
-                <p className="mt-1 text-xs text-slate-500">
+                <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight text-ink">{videoFile?.name ?? "Running video"}</h2>
+                <p className="mt-1 text-xs text-muted">
                   {report.quality.analyzedStartSec.toFixed(1)}–{report.quality.analyzedEndSec.toFixed(1)} s analyzed
-                  <span className="px-2 text-slate-300">·</span>{report.quality.sampledFrames} sampled frames
-                  <span className="px-2 text-slate-300">·</span>{report.quality.samplingRateFps} samples/s
+                  <span className="px-2 text-border-strong">·</span>{report.quality.sampledFrames} sampled frames
+                  <span className="px-2 text-border-strong">·</span>{report.quality.samplingRateFps} samples/s
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -341,9 +329,9 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <AnalysisQualityPanel quality={report.quality} />
-            <div className="flex flex-col gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="Analysis report sections">
+            <AnalysisQualityPanel quality={report.quality} stepCount={report.gait.stepCount} />
+            <div className="max-w-full overflow-x-auto">
+              <div className="inline-flex gap-1 rounded-xl border border-border bg-surface p-1 shadow-card" role="tablist" aria-label="Analysis report sections">
                 {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
                   <button
                     key={tab}
@@ -352,8 +340,8 @@ export default function Home() {
                     aria-selected={activeTab === tab}
                     aria-controls={`${tab}-report-panel`}
                     id={`${tab}-report-tab`}
-                    className={`min-h-10 shrink-0 border-b-2 px-3 text-xs font-semibold transition-colors sm:px-4 ${
-                      activeTab === tab ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-800"
+                    className={`min-h-9 shrink-0 rounded-lg px-3 text-xs font-semibold transition-colors sm:px-4 ${
+                      activeTab === tab ? "bg-primary text-on-primary" : "text-body hover:bg-subtle hover:text-ink"
                     }`}
                   >
                     {tab === "summary" && "Summary"}
@@ -378,28 +366,49 @@ export default function Home() {
   );
 }
 
-function AnalysisQualityPanel({ quality }: { quality: AnalysisQuality }) {
+const CAMERA_VIEW_LABELS: Record<AnalysisQuality["cameraView"], string> = {
+  side: "Side-on",
+  oblique: "Diagonal",
+  "front-or-back": "Front or back",
+  unknown: "Unknown",
+};
+
+function AnalysisQualityPanel({ quality, stepCount }: { quality: AnalysisQuality; stepCount: number }) {
+  const ok = quality.sufficientForSummary;
   return (
-    <section className={`border px-4 py-3 ${quality.sufficientForSummary ? "border-border bg-surface" : "border-warning/40 bg-amber-50/60"}`} aria-label="Analysis data quality">
+    <section className={`panel p-4 sm:p-5 ${ok ? "" : "border-warning/40"}`} aria-label="Analysis data quality">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <h2 className="text-xs font-semibold text-slate-800">Data quality & coverage</h2>
-        </div>
-        <span className={`shrink-0 text-[11px] font-semibold ${quality.sufficientForSummary ? "text-success" : "text-warning"}`}>
-          {quality.sufficientForSummary ? "Complete tracking" : "Incomplete tracking"}
+        <h2 className="text-sm font-semibold text-ink">Recording quality</h2>
+        <span className={`status-pill ${ok ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
+          {ok ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />}
+          {ok ? "Suitable for scoring" : "Score withheld"}
         </span>
       </div>
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-xs sm:grid-cols-3 lg:grid-cols-5">
-        <QualityValue label="Sampled frames" value={`${quality.sampledFrames}`} />
-        <QualityValue label="Fully tracked" value={`${quality.trackedFrames}`} />
-        <QualityValue label="Valid core tracking" value={`${quality.validTrackingPct}%`} />
-        <QualityValue label="Mean landmark visibility" value={quality.meanLandmarkVisibility === null ? "Unavailable" : `${(quality.meanLandmarkVisibility * 100).toFixed(1)}%`} />
-        <QualityValue label="Analyzed interval" value={`${quality.analyzedStartSec.toFixed(1)}–${quality.analyzedEndSec.toFixed(1)}s of ${quality.sourceDurationSec.toFixed(1)}s`} />
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
+        <QualityValue label="Camera view" value={CAMERA_VIEW_LABELS[quality.cameraView]} />
+        <QualityValue
+          label="Running direction"
+          value={quality.facingDirection === null ? "Unknown" : quality.facingDirection === 1 ? "Left → right" : "Right → left"}
+        />
+        <QualityValue label="Tracked frames" value={`${quality.validTrackingPct}%`} />
+        <QualityValue label="Steps used" value={`${stepCount}`} />
+        <QualityValue label="Landmark visibility" value={quality.meanLandmarkVisibility === null ? "Unavailable" : `${(quality.meanLandmarkVisibility * 100).toFixed(0)}%`} />
+        <QualityValue label="Analysed" value={`${quality.analyzedStartSec.toFixed(1)}–${quality.analyzedEndSec.toFixed(1)} s of ${quality.sourceDurationSec.toFixed(1)} s`} />
       </dl>
+      {quality.warnings.length > 0 && (
+        <ul className="mt-4 space-y-1.5 border-t border-border pt-3">
+          {quality.warnings.map((warning) => (
+            <li key={warning} className="flex gap-2 text-xs leading-relaxed text-body">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+              {warning}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
 function QualityValue({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-slate-500">{label}</dt><dd className="mt-0.5 font-mono font-medium text-slate-800">{value}</dd></div>;
+  return <div><dt className="text-muted">{label}</dt><dd className="mt-0.5 font-semibold text-ink">{value}</dd></div>;
 }

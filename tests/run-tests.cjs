@@ -27,6 +27,9 @@ try {
     "src/lib/signalProcessor.ts",
     "src/lib/symmetryAnalyzer.ts",
     "src/lib/formScorer.ts",
+    "src/lib/researchReferences.ts",
+    "src/lib/metricComparison.ts",
+    "src/lib/analysisQuality.ts",
     "src/lib/pdfReport.ts",
     "src/lib/poseEstimator.ts",
   ], { cwd: root, stdio: "inherit" });

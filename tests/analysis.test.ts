@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculate2DAngle, calculatePelvicTilt, computeSequenceKinematics } from "../src/lib/biomechanics";
-import { analyzeGaitCycles, findPeaks } from "../src/lib/gaitCycle";
-import { calculateFormScore, getCadenceDemoScoreBand } from "../src/lib/formScorer";
+import {
+  assessCameraView,
+  calculate2DAngle,
+  calculatePelvicTilt,
+  calculateShankAngle,
+  computeSequenceKinematics,
+  detectFacingDirection,
+} from "../src/lib/biomechanics";
+import { analyzeGaitCycles, findPeaks, refinePeakTime } from "../src/lib/gaitCycle";
+import { calculateFormScore } from "../src/lib/formScorer";
 import { getMetricComparisons } from "../src/lib/metricComparison";
 import { createPdfReport, formatPdfMetric } from "../src/lib/pdfReport";
-import { evaluateSymmetryAndConsistency } from "../src/lib/symmetryAnalyzer";
-import { convertMediaPipeLandmarks, createUnavailableFrame, hasCompleteTrackingCoverage } from "../src/lib/poseEstimator";
-import { GaitMetrics, KinematicSequence, Landmark, metric, unavailableMetric } from "../src/types/telemetry";
+import { evaluateSymmetryAndConsistency, symmetryIndex } from "../src/lib/symmetryAnalyzer";
+import { buildAnalysisQuality } from "../src/lib/analysisQuality";
+import { REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
+import { convertMediaPipeLandmarks, createUnavailableFrame, hasSufficientTrackingCoverage } from "../src/lib/poseEstimator";
+import { CompleteAnalysisReport, FramePose, GaitMetrics, KinematicSequence, Landmark, metric } from "../src/types/telemetry";
 
 const landmark = (x: number, y: number, visibility = 0.99): Landmark => ({ x, y, z: 0, visibility });
 
@@ -21,11 +30,55 @@ function emptyKinematics(length = 0): KinematicSequence {
     leftElbowAngles: missing(),
     rightElbowAngles: missing(),
     trunkImagePlaneAngles: missing(),
+    trunkForwardLeanAngles: missing(),
     hipLineImageTiltAngles: missing(),
     leftAnkleY: missing(),
     rightAnkleY: missing(),
     pelvisCenterY: missing(),
     torsoHeightPx: missing(),
+    facingDirection: null,
+  };
+}
+
+/** Side-view runner facing +x: nose ahead of ears, toes ahead of heels, shoulders slightly ahead of hips. */
+function sideViewFrame(index: number, timestamp: number, options: { leftAnkleY?: number; rightAnkleY?: number; facing?: 1 | -1 } = {}): FramePose {
+  const facing = options.facing ?? 1;
+  const cx = 300;
+  const points: (Landmark | null)[] = Array.from({ length: 33 }, () => landmark(cx, 300));
+  points[0] = landmark(cx + 20 * facing, 100);
+  points[7] = landmark(cx, 102);
+  points[8] = landmark(cx + 2, 102);
+  points[11] = landmark(cx + 18 * facing, 150);
+  points[12] = landmark(cx + 22 * facing, 150);
+  points[23] = landmark(cx, 300);
+  points[24] = landmark(cx + 4, 300);
+  points[25] = landmark(cx + 10 * facing, 400);
+  points[26] = landmark(cx + 12 * facing, 400);
+  points[27] = landmark(cx + 20 * facing, options.leftAnkleY ?? 500);
+  points[28] = landmark(cx + 22 * facing, options.rightAnkleY ?? 500);
+  points[29] = landmark(cx + 10 * facing, 510);
+  points[30] = landmark(cx + 12 * facing, 510);
+  points[31] = landmark(cx + 40 * facing, 512);
+  points[32] = landmark(cx + 42 * facing, 512);
+  return { frameIndex: index, timestamp, landmarks: points, tracked: true, meanVisibility: 0.99 };
+}
+
+function reportFrom(kinematics: KinematicSequence, gait: GaitMetrics, frames: FramePose[], sufficient: boolean): CompleteAnalysisReport {
+  const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
+  const formScore = calculateFormScore(kinematics, gait, symmetry, sufficient);
+  const quality = buildAnalysisQuality(frames, kinematics, gait, { samplingRateFps: 30, sourceDurationSec: 1 });
+  return {
+    totalFrames: frames.length,
+    fps: 30,
+    durationSec: 1,
+    videoWidth: 640,
+    videoHeight: 480,
+    frames,
+    kinematics,
+    gait,
+    symmetry,
+    formScore,
+    quality: { ...quality, sufficientForSummary: sufficient },
   };
 }
 
@@ -47,6 +100,12 @@ test("hip-line image tilt is invariant to left/right screen orientation", () => 
   assert.ok(Math.abs(uprightSlope - 26.565051177) < 1e-6);
 });
 
+test("shank angle is positive when the ankle is at larger x than the knee", () => {
+  const angle = calculateShankAngle(landmark(0, 0), landmark(10, 100));
+  assert.ok(angle !== null && Math.abs(angle - 5.7106) < 1e-3);
+  assert.ok((calculateShankAngle(landmark(0, 0), landmark(-10, 100)) ?? 0) < 0);
+});
+
 test("non-finite metric values become unavailable rather than retaining measured provenance", () => {
   const invalid = metric(Number.NaN, "landmark-derived", "deg", "invalid value");
   assert.equal(invalid.value, null);
@@ -60,15 +119,39 @@ test("missing pose frames remain missing through kinematic calculation", () => {
   assert.equal(frame.landmarks[25], null);
   assert.equal(sequence.leftKneeAngles[0], null);
   assert.equal(sequence.trunkImagePlaneAngles[0], null);
+  assert.equal(sequence.facingDirection, null);
 });
 
-test("tracking quality gate rejects partial core-landmark coverage", () => {
+test("facing direction is detected and forward lean is signed by it", () => {
+  const right = Array.from({ length: 5 }, (_, index) => sideViewFrame(index, index / 30, { facing: 1 }));
+  const left = Array.from({ length: 5 }, (_, index) => sideViewFrame(index, index / 30, { facing: -1 }));
+  assert.equal(detectFacingDirection(right), 1);
+  assert.equal(detectFacingDirection(left), -1);
+  const rightLean = computeSequenceKinematics(right).trunkForwardLeanAngles[0];
+  const leftLean = computeSequenceKinematics(left).trunkForwardLeanAngles[0];
+  assert.ok(rightLean !== null && rightLean > 0);
+  assert.ok(leftLean !== null && leftLean > 0);
+});
+
+test("camera view classification separates side-on from frontal recordings", () => {
+  const side = [sideViewFrame(0, 0)];
+  assert.equal(assessCameraView(side).view, "side");
+  const frontal = sideViewFrame(0, 0);
+  frontal.landmarks[11] = landmark(240, 150);
+  frontal.landmarks[12] = landmark(360, 150);
+  frontal.landmarks[23] = landmark(260, 300);
+  frontal.landmarks[24] = landmark(340, 300);
+  assert.equal(assessCameraView([frontal]).view, "front-or-back");
+});
+
+test("tracking quality gate requires most frames to have core landmarks", () => {
   const unavailable = createUnavailableFrame(0, 0);
   const validPoints = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.9 }));
   const tracked = convertMediaPipeLandmarks(validPoints, 1, 0.1, 640, 480);
-  assert.equal(hasCompleteTrackingCoverage([tracked]), true);
-  assert.equal(hasCompleteTrackingCoverage([tracked, unavailable]), false);
-  assert.equal(hasCompleteTrackingCoverage([]), false);
+  assert.equal(hasSufficientTrackingCoverage([tracked]), true);
+  assert.equal(hasSufficientTrackingCoverage([tracked, unavailable]), false);
+  assert.equal(hasSufficientTrackingCoverage([...Array.from({ length: 9 }, () => tracked), unavailable]), true);
+  assert.equal(hasSufficientTrackingCoverage([]), false);
 });
 
 test("MediaPipe conversion does not promote absent or low-visibility landmarks to valid tracking", () => {
@@ -91,169 +174,158 @@ test("peak detection uses actual timestamps and respects event separation", () =
   assert.deepEqual(peaks, [3, 9, 15, 21, 27, 33]);
 });
 
+test("parabolic refinement recovers a peak between samples", () => {
+  const times = [0, 1 / 30, 2 / 30];
+  const truePeak = 1 / 30 + 0.01;
+  const values = times.map((time) => 100 - ((time - truePeak) * 1000) ** 2);
+  assert.ok(Math.abs(refinePeakTime(values, times, 1) - truePeak) < 1e-6);
+});
+
 test("gait analysis does not manufacture cadence or contact times without events", () => {
   const gait = analyzeGaitCycles([], [], [], emptyKinematics(), []);
   assert.equal(gait.cadenceSpm.value, null);
   assert.equal(gait.avgStepTimeSec.value, null);
   assert.equal(gait.groundContactTimeMs.value, null);
-  assert.equal(gait.pelvisVerticalRangeBodyHeightPct.value, null);
+  assert.equal(gait.verticalOscillationTorsoPct.value, null);
+  assert.equal(gait.stepCount, 0);
 });
 
-test("cadence is derived from detected events rather than substituted defaults", () => {
-  const times = Array.from({ length: 50 }, (_, index) => index / 10);
-  const eventFrames = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39];
-  const left = times.map((_, index) => eventFrames.filter((_, event) => event % 2 === 0).includes(index) ? 10 : 0);
-  const right = times.map((_, index) => eventFrames.filter((_, event) => event % 2 === 1).includes(index) ? 10 : 0);
+test("cadence from a 30 fps ankle trajectory is accurate to within 1 step/min", () => {
+  const cadence = 172;
+  const strideSec = 120 / cadence;
+  const times = Array.from({ length: 300 }, (_, index) => index / 30);
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  const right = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI));
   const gait = analyzeGaitCycles(times, left, right, emptyKinematics(times.length), []);
   assert.ok(gait.cadenceSpm.value !== null);
+  assert.ok(Math.abs(gait.cadenceSpm.value - cadence) < 1, `cadence ${gait.cadenceSpm.value}`);
   assert.equal(gait.cadenceSpm.status, "algorithmically-estimated");
+  assert.ok(gait.stepCount >= 10);
+  assert.ok(gait.stepTimeCvPct.value !== null && gait.stepTimeCvPct.value < 2);
   assert.equal(gait.groundContactTimeMs.value, null);
 });
 
-test("unavailable symmetry inputs cannot become perfect scores", () => {
-  const gait: GaitMetrics = {
-    cadenceSpm: unavailableMetric("steps/min", "test"),
-    avgStepTimeSec: unavailableMetric("s", "test"),
-    groundContactTimeMs: unavailableMetric("ms", "test"),
-    flightTimeMs: unavailableMetric("ms", "test"),
-    dutyFactorPct: unavailableMetric("%", "test"),
-    pelvisVerticalRangeBodyHeightPct: unavailableMetric("% body height", "test"),
-    ankleHipOffsetBodyHeightPct: unavailableMetric("% body height", "test"),
-    maxHipLineImageTiltDeg: unavailableMetric("deg", "test"),
-    stepTimeCvPct: unavailableMetric("%", "test"),
-    stancePct: unavailableMetric("%", "test"),
-    swingPct: unavailableMetric("%", "test"),
-    leftContacts: [],
-    rightContacts: [],
-  };
+test("missed events do not halve the cadence estimate", () => {
+  const times = Array.from({ length: 300 }, (_, index) => index / 30);
+  const strideSec = 120 / 170;
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  const right = times.map((time, index) =>
+    index > 120 && index < 150 ? null : 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI)
+  );
+  const gait = analyzeGaitCycles(times, left, right, emptyKinematics(times.length), []);
+  assert.ok(gait.cadenceSpm.value !== null && Math.abs(gait.cadenceSpm.value - 170) < 2);
+});
+
+test("foot-strike events report shank angle, knee flexion and landing offset in the running direction", () => {
+  const strideSec = 0.7;
+  const frames = Array.from({ length: 150 }, (_, index) => {
+    const time = index / 30;
+    return sideViewFrame(index, time, {
+      leftAnkleY: 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec),
+      rightAnkleY: 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI),
+    });
+  });
+  const kinematics = computeSequenceKinematics(frames);
+  const gait = analyzeGaitCycles(frames.map((frame) => frame.timestamp), kinematics.leftAnkleY, kinematics.rightAnkleY, kinematics, frames);
+  assert.ok(gait.events.length >= 6);
+  assert.ok(gait.footStrikeShankAngleDeg.value !== null && gait.footStrikeShankAngleDeg.value > 0);
+  assert.ok(gait.midstanceKneeFlexionDeg.value !== null && gait.midstanceKneeFlexionDeg.value >= 0);
+  assert.ok(gait.ankleAheadOfHipTorsoPct.value !== null && gait.ankleAheadOfHipTorsoPct.value > 0);
+  assert.ok(gait.left.events > 0 && gait.right.events > 0);
+});
+
+test("symmetry index compares per-leg events and flags differences over 10%", () => {
+  assert.equal(symmetryIndex(40, 40), 0);
+  assert.ok(Math.abs((symmetryIndex(44, 40) ?? 0) - 9.5238) < 1e-3);
+  assert.equal(symmetryIndex(null, 40), null);
+  const gait = analyzeGaitCycles([], [], [], emptyKinematics(), []);
+  gait.left.midstanceKneeFlexionDeg = metric(45, "algorithmically-estimated", "deg", "test");
+  gait.right.midstanceKneeFlexionDeg = metric(36, "algorithmically-estimated", "deg", "test");
+  const symmetry = evaluateSymmetryAndConsistency(emptyKinematics(), gait);
+  assert.equal(symmetry.kneeFlexionSymmetryIndexPct.value, 22.2);
+  assert.equal(symmetry.symmetryScore.value, scoreAgainstReference(REFERENCE_RANGES.symmetryIndex, 22.2222));
+});
+
+test("reference scoring is 100 inside the band and decreases outside it", () => {
+  const cadence = REFERENCE_RANGES.cadence;
+  assert.equal(scoreAgainstReference(cadence, 170), 100);
+  assert.equal(scoreAgainstReference(cadence, cadence.minimum), 100);
+  assert.equal(scoreAgainstReference(cadence, cadence.minimum - 5), 100 - 5 * cadence.penaltyPerUnit);
+  assert.equal(scoreAgainstReference(cadence, 20), MIN_COMPONENT_SCORE);
+  assert.equal(getReferencePosition(cadence, 150), "below");
+  assert.equal(getReferencePosition(cadence, 200), "above");
+  for (const reference of Object.values(REFERENCE_RANGES)) {
+    assert.ok(reference.citations.length > 0, `${reference.id} must cite a source`);
+    assert.ok(reference.minimum < reference.maximum);
+  }
+});
+
+test("unavailable inputs cannot become perfect scores", () => {
+  const gait = analyzeGaitCycles([], [], [], emptyKinematics(), []);
   const symmetry = evaluateSymmetryAndConsistency(emptyKinematics(), gait);
   const score = calculateFormScore(emptyKinematics(), gait, symmetry, true);
-  assert.equal(symmetry.kneeAngleSymmetryScore.value, null);
-  assert.equal(symmetry.strideConsistencyScore.value, null);
+  assert.equal(symmetry.symmetryScore.value, null);
+  assert.equal(symmetry.consistencyScore.value, null);
   assert.equal(score.overallScore.value, null);
 });
 
-test("the composite remains unavailable below the tracking-quality gate", () => {
-  const kinematics = emptyKinematics();
-  kinematics.trunkImagePlaneAngles = [10, -10];
-  const unavailableGait = analyzeGaitCycles([], [], [], kinematics, []);
+test("the composite is withheld below the quality gate and computed above it", () => {
+  const kinematics = emptyKinematics(2);
+  kinematics.facingDirection = 1;
+  kinematics.trunkForwardLeanAngles = [8, 9];
   const gait = {
-    ...unavailableGait,
+    ...analyzeGaitCycles([], [], [], kinematics, []),
     cadenceSpm: metric(170, "algorithmically-estimated", "steps/min", "test"),
+    midstanceKneeFlexionDeg: metric(42, "algorithmically-estimated", "deg", "test"),
+    footStrikeShankAngleDeg: metric(14, "algorithmically-estimated", "deg", "test"),
   };
-  const unavailableSymmetry = evaluateSymmetryAndConsistency(kinematics, gait);
-  const symmetry = {
-    ...unavailableSymmetry,
-    kneeAngleSymmetryScore: metric(95, "heuristic-estimate", "%", "test"),
-    strideConsistencyScore: metric(96, "heuristic-estimate", "%", "test"),
-  };
-  const score = calculateFormScore(kinematics, gait, symmetry, false);
-  assert.equal(score.overallScore.value, null);
+  const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
+  assert.equal(calculateFormScore(kinematics, gait, symmetry, false).overallScore.value, null);
+  const score = calculateFormScore(kinematics, gait, symmetry, true);
   assert.equal(score.subScores.posture.value, 100);
+  assert.equal(score.subScores.footStrike.value, 100 - 6 * REFERENCE_RANGES.footStrikeShank.penaltyPerUnit);
+  assert.ok(score.overallScore.value !== null && score.overallScore.value < 100);
+  assert.ok(score.observations.some((note) => note.startsWith("Shank angle at foot strike")));
+});
+
+test("metric comparisons use cited reference ranges and mark unreferenced metrics as observed only", () => {
+  const kinematics = emptyKinematics(2);
+  kinematics.facingDirection = 1;
+  kinematics.trunkForwardLeanAngles = [8, 9];
+  const gait = {
+    ...analyzeGaitCycles([], [], [], kinematics, []),
+    cadenceSpm: metric(155, "algorithmically-estimated", "steps/min", "test"),
+  };
+  const frames = [createUnavailableFrame(0, 0), createUnavailableFrame(1, 0.1)];
+  const comparisons = getMetricComparisons(reportFrom(kinematics, gait, frames, true));
+
+  assert.equal(comparisons.length, 8);
+  assert.equal(comparisons[0].referenceText, "160-185 steps/min");
+  assert.equal(comparisons[0].position, "below");
+  assert.equal(comparisons[0].score?.value, scoreAgainstReference(REFERENCE_RANGES.cadence, 155));
+  assert.equal(comparisons[3].observed.value, 8.5);
+  assert.equal(comparisons[3].position, "within");
+  assert.equal(comparisons[6].reference, null);
+  assert.equal(comparisons[6].position, "unavailable");
 });
 
 test("PDF values preserve unavailable and estimated metric values", () => {
-  assert.equal(
-    formatPdfMetric(unavailableMetric("steps/min", "not enough events")),
-    "Unavailable"
-  );
+  assert.equal(formatPdfMetric(metric(null, "unavailable", "steps/min", "not enough events")), "Unavailable");
   assert.equal(
     formatPdfMetric({ value: 172, status: "algorithmically-estimated", unit: "steps/min", explanation: "test" }),
     "172 steps/min"
   );
 });
 
-test("metric comparisons reuse app scoring rules without inventing image-metric targets", () => {
-  assert.equal(getCadenceDemoScoreBand(154.9).score, 70);
-  assert.equal(getCadenceDemoScoreBand(155).score, 85);
-  assert.equal(getCadenceDemoScoreBand(165).score, 100);
-  assert.equal(getCadenceDemoScoreBand(185).score, 100);
-  assert.equal(getCadenceDemoScoreBand(185.1).score, 92);
-
-  const kinematics = emptyKinematics(2);
-  kinematics.trunkImagePlaneAngles = [8, -9];
-  const unavailableGait = analyzeGaitCycles([], [], [], kinematics, []);
-  const gait = {
-    ...unavailableGait,
-    cadenceSpm: metric(159, "algorithmically-estimated", "steps/min", "test"),
-    stepTimeCvPct: metric(49, "algorithmically-estimated", "%", "test"),
-  };
-  const unavailableSymmetry = evaluateSymmetryAndConsistency(kinematics, gait);
-  const symmetry = {
-    ...unavailableSymmetry,
-    kneeAngleAsymmetryPct: metric(15.6, "algorithmically-estimated", "%", "test"),
-    kneeAngleSymmetryScore: metric(84, "heuristic-estimate", "%", "test"),
-    strideConsistencyScore: metric(51, "heuristic-estimate", "%", "test"),
-  };
-  const formScore = calculateFormScore(kinematics, gait, symmetry, true);
-  const report = {
-    totalFrames: 2,
-    fps: 10,
-    durationSec: 1,
-    videoWidth: 640,
-    videoHeight: 480,
-    frames: [createUnavailableFrame(0, 0), createUnavailableFrame(1, 0.1)],
-    kinematics,
-    gait,
-    symmetry,
-    formScore,
-    quality: {
-      sampledFrames: 2,
-      trackedFrames: 2,
-      validTrackingPct: 100,
-      meanLandmarkVisibility: 0.9,
-      analyzedStartSec: 0,
-      analyzedEndSec: 0.1,
-      samplingRateFps: 10,
-      sourceDurationSec: 1,
-      sufficientForSummary: true,
-      message: "Sufficient tracking",
-    },
-  };
-  const comparisons = getMetricComparisons(report);
-
-  assert.equal(comparisons.length, 8);
-  assert.equal(comparisons[0].reference, "155-<165 steps/min");
-  assert.equal(comparisons[0].position, "App rule score: 85/100");
-  assert.equal(comparisons[2].reference, "No app reference band");
-  assert.equal(comparisons[5].observed.value, 8.5);
-  assert.equal(comparisons[5].position, "Within app score band");
-  assert.equal(comparisons[6].position, "Rule score: 51/100");
-});
-
-test("PDF report contains a structured summary and kinematic-trace pages", () => {
+test("PDF report contains a structured summary, kinematic traces and references", () => {
   const kinematics = emptyKinematics(2);
   const gait = analyzeGaitCycles([], [], [], kinematics, []);
-  const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
-  const formScore = calculateFormScore(kinematics, gait, symmetry, false);
   const frames = [createUnavailableFrame(0, 0), createUnavailableFrame(1, 0.1)];
-  const pdf = createPdfReport({
-    totalFrames: frames.length,
-    fps: 10,
-    durationSec: 1,
-    videoWidth: 640,
-    videoHeight: 480,
-    frames,
-    kinematics,
-    gait,
-    symmetry,
-    formScore,
-    quality: {
-      sampledFrames: 2,
-      trackedFrames: 0,
-      validTrackingPct: 0,
-      meanLandmarkVisibility: null,
-      analyzedStartSec: 0,
-      analyzedEndSec: 0.1,
-      samplingRateFps: 10,
-      sourceDurationSec: 1,
-      sufficientForSummary: false,
-      message: "Incomplete tracking",
-    },
-  }, "test.mp4");
+  const pdf = createPdfReport(reportFrom(kinematics, gait, frames, false), "test.mp4");
   assert.equal(pdf.getNumberOfPages(), 2);
   const output = pdf.output();
   assert.ok(output.length > 1000);
   assert.ok(output.includes("METRIC COMPARISON"));
-  assert.ok(output.includes("No app reference band"));
+  assert.ok(output.includes("RESEARCH REFERENCE"));
+  assert.ok(output.includes("REFERENCES"));
 });

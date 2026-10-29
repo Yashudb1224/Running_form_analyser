@@ -1,26 +1,31 @@
 import { FormScoreData, GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
+import { REFERENCE_RANGES, ReferenceRange, getReferenceGuidance, scoreAgainstReference } from "./researchReferences";
 
-export const POSTURE_DEMO_REFERENCE = { minimumDeg: 3, maximumDeg: 10 } as const;
+const COMPONENT_WEIGHTS = {
+  cadence: 0.2,
+  footStrike: 0.2,
+  kneeFlexion: 0.15,
+  posture: 0.15,
+  symmetry: 0.2,
+  consistency: 0.1,
+} as const;
+const MIN_COMPONENTS_FOR_COMPOSITE = 4;
 
-export function getCadenceDemoScoreBand(cadence: number) {
-  if (cadence < 155) return { label: "<155 steps/min", score: 70, minimum: 120, maximum: 155 };
-  if (cadence < 165) return { label: "155-<165 steps/min", score: 85, minimum: 155, maximum: 165 };
-  if (cadence <= 185) return { label: "165-185 steps/min", score: 100, minimum: 165, maximum: 185 };
-  return { label: ">185 steps/min", score: 92, minimum: 185, maximum: 210 };
+type ComponentKey = keyof typeof COMPONENT_WEIGHTS;
+
+export function meanForwardTrunkLean(kinematics: KinematicSequence): number | null {
+  const valid = kinematics.trunkForwardLeanAngles.filter((value): value is number => value !== null && Number.isFinite(value));
+  return valid.length ? Math.round((valid.reduce((sum, value) => sum + value, 0) / valid.length) * 10) / 10 : null;
 }
 
-function average(values: (number | null)[]): number | null {
-  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-}
-
-function averageAbsolute(values: (number | null)[]): number | null {
-  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + Math.abs(value), 0) / valid.length : null;
-}
-
-function unavailable(reason: string): MetricResult {
-  return unavailableMetric("%", reason);
+function referenceScore(reference: ReferenceRange, value: number | null, unavailableReason: string): MetricResult {
+  if (value === null) return unavailableMetric("/ 100", unavailableReason);
+  return metric(
+    scoreAgainstReference(reference, value),
+    "heuristic-estimate",
+    "/ 100",
+    `100 inside ${reference.minimum}-${reference.maximum} ${reference.unit}; ${reference.penaltyPerUnit} points lost per ${reference.unit} outside.`
+  );
 }
 
 export function calculateFormScore(
@@ -30,81 +35,69 @@ export function calculateFormScore(
   analysisSufficient: boolean
 ): FormScoreData {
   const cadence = gait.cadenceSpm.value;
-  const meanImageLean = averageAbsolute(kinematics.trunkImagePlaneAngles);
-  const cadenceScore = cadence === null
-    ? unavailable("Cadence is unavailable because gait events were insufficient.")
-    : metric(
-      getCadenceDemoScoreBand(cadence).score,
-      "heuristic-estimate",
-      "%",
-      "Demonstration rule using the existing cadence bands; not an individualized or validated target."
-    );
-  const postureScore = meanImageLean === null
-    ? unavailable("A valid shoulder and hip midpoint was not available.")
-    : metric(
-      meanImageLean >= POSTURE_DEMO_REFERENCE.minimumDeg && meanImageLean <= POSTURE_DEMO_REFERENCE.maximumDeg
-        ? 100
-        : meanImageLean < POSTURE_DEMO_REFERENCE.minimumDeg
-          ? 80
-          : meanImageLean <= 15
-            ? 82
-            : 70,
-      "heuristic-estimate",
-      "%",
-      `Demonstration scoring band: ${POSTURE_DEMO_REFERENCE.minimumDeg}-${POSTURE_DEMO_REFERENCE.maximumDeg} degrees mean absolute image-plane angle; not a validated posture target.`
-    );
-  const efficiency = unavailable("A calibrated efficiency score cannot be derived from this 2D video analysis.");
-  const requiredScores = [
-    symmetry.kneeAngleSymmetryScore.value,
-    symmetry.strideConsistencyScore.value,
-    cadenceScore.value,
-    postureScore.value,
-  ];
-  const [symmetryValue, consistencyValue, cadenceValue, postureValue] = requiredScores;
-  const overall = analysisSufficient && requiredScores.every((value) => value !== null)
+  const lean = meanForwardTrunkLean(kinematics);
+  const shank = gait.footStrikeShankAngleDeg.value;
+  const knee = gait.midstanceKneeFlexionDeg.value;
+
+  const subScores: Record<ComponentKey, MetricResult> = {
+    cadence: referenceScore(REFERENCE_RANGES.cadence, cadence, "Cadence is unavailable because gait events were insufficient."),
+    footStrike: referenceScore(REFERENCE_RANGES.footStrikeShank, shank, gait.footStrikeShankAngleDeg.explanation),
+    kneeFlexion: referenceScore(REFERENCE_RANGES.midstanceKneeFlexion, knee, "No stance phases with a visible knee were detected."),
+    posture: referenceScore(
+      REFERENCE_RANGES.trunkLean,
+      lean,
+      kinematics.facingDirection === null
+        ? "Running direction is unknown, so forward lean cannot be signed."
+        : "A valid shoulder and hip midpoint was not available."
+    ),
+    symmetry: symmetry.symmetryScore,
+    consistency: symmetry.consistencyScore,
+  };
+
+  const available = (Object.keys(COMPONENT_WEIGHTS) as ComponentKey[])
+    .filter((key) => subScores[key].value !== null);
+  const totalWeight = available.reduce((sum, key) => sum + COMPONENT_WEIGHTS[key], 0);
+  const canScore = analysisSufficient && available.length >= MIN_COMPONENTS_FOR_COMPOSITE && totalWeight > 0;
+  const overall = canScore
     ? metric(
-      Math.round(
-        (0.25 * (symmetryValue ?? 0) +
-          0.25 * (consistencyValue ?? 0) +
-          0.2 * (cadenceValue ?? 0) +
-          0.15 * (postureValue ?? 0)) / 0.85
-      ),
+      Math.round(available.reduce((sum, key) => sum + COMPONENT_WEIGHTS[key] * (subScores[key].value ?? 0), 0) / totalWeight),
       "heuristic-estimate",
       "/ 100",
-      "Experimental weighted rule-based index using available legacy components; uncalibrated efficiency is excluded and weights are renormalized. Not validated."
+      `Weighted mean of ${available.length} component scores, each measured against a published reference range. Weights are renormalized over the available components.`
     )
-    : unavailable(analysisSufficient
-      ? "The composite is withheld because one or more required inputs are unavailable."
-      : "The composite is withheld because the video did not meet the minimum tracking-quality gate.");
+    : unavailableMetric("/ 100", analysisSufficient
+      ? `The composite needs at least ${MIN_COMPONENTS_FOR_COMPOSITE} scored components; ${available.length} were available.`
+      : "The composite is withheld because the video did not meet the tracking-quality and camera-view requirements.");
 
   const category = overall.value === null
-    ? "Insufficient valid data for a composite"
-    : overall.value < 75
-      ? "Review the measured components"
-      : overall.value < 88
-        ? "Mixed results across measured components"
-        : "High rule-based demonstration score";
+    ? "Insufficient data for an overall score"
+    : overall.value >= 90
+      ? "Close to research-typical ranges"
+      : overall.value >= 75
+        ? "Mostly within typical ranges"
+        : overall.value >= 60
+          ? "Several measures outside typical ranges"
+          : "Most measures outside typical ranges";
 
-  const observations = [
-    cadence === null
-      ? "Cadence: unavailable."
-      : `Estimated cadence: ${cadence.toFixed(1)} steps/min.`,
-    meanImageLean === null
-      ? "Mean trunk image angle: unavailable."
-      : `Mean trunk image angle: ${meanImageLean.toFixed(1)} deg.`,
-    `Knee-angle asymmetry: ${symmetry.kneeAngleAsymmetryPct.value === null ? "unavailable" : `${symmetry.kneeAngleAsymmetryPct.value.toFixed(1)}%`}.`,
-  ];
-
-  return {
-    overallScore: overall,
-    category,
-    observations,
-    subScores: {
-      symmetry: symmetry.kneeAngleSymmetryScore,
-      consistency: symmetry.strideConsistencyScore,
-      cadence: cadenceScore,
-      posture: postureScore,
-      efficiency,
-    },
+  const observations: string[] = [];
+  const addObservation = (reference: ReferenceRange, value: number | null) => {
+    if (value === null) return;
+    const guidance = getReferenceGuidance(reference, value);
+    if (guidance && guidance !== "Within the reference range.") {
+      observations.push(`${reference.label} ${value.toFixed(1)} ${reference.unit}: ${guidance}`);
+    }
   };
+  addObservation(REFERENCE_RANGES.footStrikeShank, shank);
+  addObservation(REFERENCE_RANGES.cadence, cadence);
+  addObservation(REFERENCE_RANGES.midstanceKneeFlexion, knee);
+  addObservation(REFERENCE_RANGES.trunkLean, lean);
+  const symmetryValues = [symmetry.kneeFlexionSymmetryIndexPct.value, symmetry.stepTimeSymmetryIndexPct.value]
+    .filter((value): value is number => value !== null);
+  if (symmetryValues.length) addObservation(REFERENCE_RANGES.symmetryIndex, Math.max(...symmetryValues));
+  addObservation(REFERENCE_RANGES.stepTimeVariation, gait.stepTimeCvPct.value);
+  if (!observations.length && overall.value !== null) {
+    observations.push("All scored measures are within their reference ranges.");
+  }
+
+  return { overallScore: overall, category, observations, subScores };
 }

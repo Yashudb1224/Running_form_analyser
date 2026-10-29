@@ -1,129 +1,95 @@
 import { CompleteAnalysisReport, MetricResult, metric } from "../types/telemetry";
-import { getCadenceDemoScoreBand, POSTURE_DEMO_REFERENCE } from "./formScorer";
+import { meanForwardTrunkLean } from "./formScorer";
+import {
+  REFERENCE_RANGES,
+  ReferencePosition,
+  ReferenceRange,
+  getReferenceGuidance,
+  getReferencePosition,
+} from "./researchReferences";
 
 export interface MetricComparison {
   label: string;
   observed: MetricResult;
-  reference: string;
-  position: string;
-  scale?: {
-    minimum: number;
-    maximum: number;
-    bandMinimum?: number;
-    bandMaximum?: number;
-    observed: number;
+  reference: ReferenceRange | null;
+  /** Reference band as text, or a note on why there is none. */
+  referenceText: string;
+  position: ReferencePosition | "unavailable" | "observed-only";
+  positionText: string;
+  guidance: string;
+  score: MetricResult | null;
+}
+
+const POSITION_TEXT: Record<ReferencePosition, string> = {
+  below: "Below reference",
+  within: "Within reference",
+  above: "Above reference",
+};
+
+function compare(label: string, observed: MetricResult, reference: ReferenceRange, score: MetricResult | null): MetricComparison {
+  const referenceText = `${reference.minimum}-${reference.maximum} ${reference.unit}`;
+  if (observed.value === null) {
+    return { label, observed, reference, referenceText, position: "unavailable", positionText: "Unavailable", guidance: observed.explanation, score };
+  }
+  const position = getReferencePosition(reference, observed.value);
+  return {
+    label,
+    observed,
+    reference,
+    referenceText,
+    position,
+    positionText: POSITION_TEXT[position],
+    guidance: getReferenceGuidance(reference, observed.value),
+    score,
   };
 }
 
-function averageAbsolute(values: (number | null)[]): number | null {
-  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  return valid.length ? valid.reduce((sum, value) => sum + Math.abs(value), 0) / valid.length : null;
-}
-
-function scoreText(score: MetricResult): string {
-  return score.value === null ? "Unavailable" : `${score.value}/100`;
+function observedOnly(label: string, observed: MetricResult, note: string): MetricComparison {
+  return {
+    label,
+    observed,
+    reference: null,
+    referenceText: "No published range",
+    position: observed.value === null ? "unavailable" : "observed-only",
+    positionText: observed.value === null ? "Unavailable" : "Observed only",
+    guidance: observed.value === null ? observed.explanation : note,
+    score: null,
+  };
 }
 
 export function getMetricComparisons(report: CompleteAnalysisReport): MetricComparison[] {
-  const { gait, symmetry, formScore } = report;
-  const meanTrunk = averageAbsolute(report.kinematics.trunkImagePlaneAngles);
-  const trunkMetric = metric(
-    meanTrunk,
-    meanTrunk === null ? "unavailable" : "landmark-derived",
+  const { gait, symmetry, formScore, kinematics } = report;
+  const lean = meanForwardTrunkLean(kinematics);
+  const leanMetric = metric(
+    lean,
+    "landmark-derived",
     "deg",
-    "Mean absolute trunk image-plane angle; camera orientation is not calibrated."
+    kinematics.facingDirection === null
+      ? "Running direction could not be determined, so forward lean is unavailable."
+      : "Mean shoulder-to-hip angle from vertical, positive when leaning in the running direction."
   );
-  const cadence = gait.cadenceSpm;
-  const cadenceRule = cadence.value === null ? null : getCadenceDemoScoreBand(cadence.value);
-  const posturePosition = meanTrunk === null
-    ? "Unavailable"
-    : meanTrunk < POSTURE_DEMO_REFERENCE.minimumDeg
-      ? "Below app score band"
-      : meanTrunk <= POSTURE_DEMO_REFERENCE.maximumDeg
-        ? "Within app score band"
-        : "Above app score band";
+  const symmetryCandidates = [symmetry.kneeFlexionSymmetryIndexPct, symmetry.stepTimeSymmetryIndexPct]
+    .filter((candidate) => candidate.value !== null);
+  const worstSymmetry = symmetryCandidates.length
+    ? symmetryCandidates.reduce((worst, candidate) => ((candidate.value ?? 0) > (worst.value ?? 0) ? candidate : worst))
+    : symmetry.kneeFlexionSymmetryIndexPct;
 
   return [
-    {
-      label: "Cadence",
-      observed: cadence,
-      reference: cadenceRule?.label ?? "App band unavailable",
-      position: cadence.value === null
-        ? "Unavailable"
-        : `App rule score: ${scoreText(formScore.subScores.cadence)}`,
-      ...(cadenceRule && cadence.value !== null
-        ? {
-            scale: {
-              minimum: 120,
-              maximum: 210,
-              bandMinimum: cadenceRule.minimum,
-              bandMaximum: cadenceRule.maximum,
-              observed: cadence.value,
-            },
-          }
-        : {}),
-    },
-    {
-      label: "Knee-angle asymmetry",
-      observed: symmetry.kneeAngleAsymmetryPct,
-      reference: "App symmetry rule",
-      position: `Rule score: ${scoreText(formScore.subScores.symmetry)}`,
-      ...(formScore.subScores.symmetry.value === null
-        ? {}
-        : { scale: { minimum: 0, maximum: 100, observed: formScore.subScores.symmetry.value } }),
-    },
-    {
-      label: "Pelvis vertical range",
-      observed: gait.pelvisVerticalRangeBodyHeightPct,
-      reference: "No app reference band",
-      position: "Observed only",
-    },
-    {
-      label: "Hip-line image tilt",
-      observed: gait.maxHipLineImageTiltDeg,
-      reference: "No app reference band",
-      position: "Observed only",
-    },
-    {
-      label: "Ankle-hip image offset",
-      observed: gait.ankleHipOffsetBodyHeightPct,
-      reference: "No app reference band",
-      position: "Observed only",
-    },
-    {
-      label: "Mean trunk image angle",
-      observed: trunkMetric,
-      reference: `${POSTURE_DEMO_REFERENCE.minimumDeg}-${POSTURE_DEMO_REFERENCE.maximumDeg} deg`,
-      position: posturePosition,
-      ...(meanTrunk === null
-        ? {}
-        : {
-            scale: {
-              minimum: 0,
-              maximum: 20,
-              bandMinimum: POSTURE_DEMO_REFERENCE.minimumDeg,
-              bandMaximum: POSTURE_DEMO_REFERENCE.maximumDeg,
-              observed: meanTrunk,
-            },
-          }),
-    },
-    {
-      label: "Step-time variation",
-      observed: gait.stepTimeCvPct,
-      reference: "App consistency rule",
-      position: `Rule score: ${scoreText(formScore.subScores.consistency)}`,
-      ...(formScore.subScores.consistency.value === null
-        ? {}
-        : { scale: { minimum: 0, maximum: 100, observed: formScore.subScores.consistency.value } }),
-    },
-    {
-      label: "Step-time consistency",
-      observed: symmetry.strideConsistencyScore,
-      reference: "App score scale (0-100)",
-      position: `Rule score: ${scoreText(symmetry.strideConsistencyScore)}`,
-      ...(symmetry.strideConsistencyScore.value === null
-        ? {}
-        : { scale: { minimum: 0, maximum: 100, observed: symmetry.strideConsistencyScore.value } }),
-    },
+    compare("Cadence", gait.cadenceSpm, REFERENCE_RANGES.cadence, formScore.subScores.cadence),
+    compare("Shank angle at foot strike", gait.footStrikeShankAngleDeg, REFERENCE_RANGES.footStrikeShank, formScore.subScores.footStrike),
+    compare("Knee flexion at midstance", gait.midstanceKneeFlexionDeg, REFERENCE_RANGES.midstanceKneeFlexion, formScore.subScores.kneeFlexion),
+    compare("Forward trunk lean", leanMetric, REFERENCE_RANGES.trunkLean, formScore.subScores.posture),
+    compare("Left/right symmetry", worstSymmetry, REFERENCE_RANGES.symmetryIndex, formScore.subScores.symmetry),
+    compare("Step-time variation", gait.stepTimeCvPct, REFERENCE_RANGES.stepTimeVariation, formScore.subScores.consistency),
+    observedOnly(
+      "Foot landing ahead of hip",
+      gait.ankleAheadOfHipTorsoPct,
+      "Landing closer under the hips lowers braking forces (Lieberman et al., 2015). No numeric threshold is published for video."
+    ),
+    observedOnly(
+      "Vertical oscillation",
+      gait.verticalOscillationTorsoPct,
+      "Lower bounce is associated with better running economy (Folland et al., 2017), but this image-space value is not in centimetres."
+    ),
   ];
 }

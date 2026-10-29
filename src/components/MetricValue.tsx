@@ -17,7 +17,7 @@ export function MetricValue({ metric, digits = 1, className = "", showProvenance
     <span className={className} aria-label={`${value}; ${provenance}`}>
       <span>{value}</span>
       {showProvenance && (
-        <span className={`mt-1 block text-[10px] font-medium capitalize ${metric.status === "unavailable" ? "text-slate-500" : "text-primary"}`}>
+        <span className={`mt-1 block text-[10px] font-medium capitalize ${metric.status === "unavailable" ? "text-muted" : "text-primary"}`}>
           {provenance}
         </span>
       )}

@@ -138,11 +138,11 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
     <section className="panel p-3 sm:p-5" aria-label="Sampled pose video player">
       <div className="mb-4 flex flex-col gap-3 border-b border-border pb-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h3 className="text-base font-semibold text-slate-900">
-            Sampled pose overlay
-            <span className="ml-2 font-mono text-xs font-medium text-slate-500">{fps} samples/s</span>
+          <h3 className="text-base font-semibold text-ink">
+            Pose overlay
+            <span className="ml-2 text-xs font-medium text-muted">{fps} samples/s</span>
           </h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-muted">
             Landmark detections are sampled at {fps} frames per second; lines between samples are visual interpolation, not new detections.
           </p>
         </div>
@@ -172,7 +172,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
         </div>
       </div>
 
-      <div className="relative aspect-video w-full overflow-hidden bg-[#12171c]">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-[#111827]">
         <video
           ref={videoRef}
           src={videoUrl}
@@ -210,7 +210,7 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
             <button
               onClick={togglePlay}
               aria-label={isPlaying ? "Pause video" : "Play video"}
-              className="inline-flex h-9 w-9 items-center justify-center bg-primary text-white transition-colors hover:bg-[#245783]"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-on-primary transition-colors hover:bg-primary-hover"
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
             </button>
@@ -229,22 +229,22 @@ export const TelemetryPlayer: React.FC<TelemetryPlayerProps> = ({
               <SkipForward className="h-4 w-4" />
             </button>
 
-            <span className="ml-1 font-mono text-xs text-slate-600 sm:ml-2">
-              Sample {currentFrameIdx + 1} / {frames.length} <span className="text-slate-400">·</span> {(frames[currentFrameIdx]?.timestamp ?? 0).toFixed(2)} s
+            <span className="ml-1 text-xs tabular-nums text-body sm:ml-2">
+              Sample {currentFrameIdx + 1} / {frames.length} <span className="text-muted">·</span> {(frames[currentFrameIdx]?.timestamp ?? 0).toFixed(2)} s
             </span>
           </div>
 
           <div className="flex items-center gap-1">
-            <FastForward className="mr-1 h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+            <FastForward className="mr-1 h-3.5 w-3.5 text-muted" aria-hidden="true" />
             {[0.25, 0.5, 1.0].map((speed) => (
               <button
                 key={speed}
                 onClick={() => changeSpeed(speed)}
                 aria-pressed={playbackSpeed === speed}
-                className={`min-h-8 border px-2.5 text-xs font-medium transition-colors ${
+                className={`min-h-8 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
                   playbackSpeed === speed
-                    ? "border-primary bg-primary text-white"
-                    : "border-border bg-white text-slate-600 hover:bg-slate-50"
+                    ? "border-primary bg-primary text-on-primary"
+                    : "border-border bg-surface text-body hover:bg-subtle"
                 }`}
               >
                 {speed}x
@@ -336,8 +336,8 @@ function drawStylizedOverlay(
 
   if (!lm || !drawSkeleton) return;
 
-  const COLOR_LEFT_LEG = "#72A9D4";
-  const COLOR_RIGHT_LEG = "#E6A56D";
+  const COLOR_LEFT_LEG = "#7FA7CF";
+  const COLOR_RIGHT_LEG = "#E0A877";
   const COLOR_TORSO = "#E1E7EA";
   const COLOR_ARMS = "#B8C7D0";
 
@@ -379,7 +379,7 @@ function drawStylizedOverlay(
     ctx.restore();
   }
 
-  // 2. Draw Glowing Cyberpunk Connecting Bones
+  // 2. Skeleton segments
   const drawGlowingBone = (p1Idx: number, p2Idx: number, baseColor: string, baseWidth: number = 4) => {
     const p1 = lm[p1Idx];
     const p2 = lm[p2Idx];
@@ -441,7 +441,7 @@ function drawStylizedOverlay(
   if (drawAngleLabels) {
     const lKneeAng = kinematics.leftKneeAngles[frameIdx];
     const rKneeAng = kinematics.rightKneeAngles[frameIdx];
-    const trunkLean = kinematics.trunkImagePlaneAngles[frameIdx];
+    const trunkLean = kinematics.trunkForwardLeanAngles[frameIdx] ?? kinematics.trunkImagePlaneAngles[frameIdx];
 
     if (lm[25] && (lm[25].visibility ?? 0) >= MIN_OVERLAY_VISIBILITY && lKneeAng !== undefined && lKneeAng !== null) {
       drawAngleBadge(ctx, lm[25].x - 65, lm[25].y - 12, `L Knee: ${lKneeAng.toFixed(0)}°`, COLOR_LEFT_LEG);
