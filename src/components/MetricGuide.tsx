@@ -5,7 +5,7 @@ const definitions = [
   {
     name: "Cadence",
     unit: "steps/min",
-    meaning: "60 divided by the median time between alternating left/right stance events, detected from the ankle trajectories with sub-frame peak timing.",
+    meaning: "120 divided by the median stride time, where a stride runs from each foot contact to the contact after next. This ignores left/right labels, so pose-model leg swaps and a timing offset on the far leg cannot distort it.",
   },
   {
     name: "Shank angle at foot strike",
@@ -25,12 +25,12 @@ const definitions = [
   {
     name: "Symmetry index",
     unit: "percent",
-    meaning: "|left − right| ÷ mean of both sides, for midstance knee flexion and for step time. The larger of the two is scored.",
+    meaning: "|left − right| ÷ mean of both sides, averaged over step time and landing position. Contacts are assigned to legs from the alternation of the feet, so pose-model swaps do not mix them. Reported as observed only and not part of the overall score, because the far leg is tracked less reliably from one side-on video.",
   },
   {
-    name: "Step-time variation",
+    name: "Stride-time variation",
     unit: "percent",
-    meaning: "Coefficient of variation of step durations after removing intervals caused by missed events.",
+    meaning: "Coefficient of variation of stride times (each foot contact to the contact after next). A constant timing error on one leg cancels out.",
   },
   {
     name: "Foot landing ahead of hip",

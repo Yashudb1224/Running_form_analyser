@@ -64,7 +64,7 @@ const COMPONENT_LABELS: Record<string, string> = {
   "Knee flexion at midstance": "Knee flexion",
   "Forward trunk lean": "Trunk lean",
   "Left/right symmetry": "Symmetry",
-  "Step-time variation": "Consistency",
+  "Stride-time variation": "Consistency",
 };
 
 const COMPONENT_STATUS: Record<string, { below: string; above: string }> = {
@@ -73,7 +73,7 @@ const COMPONENT_STATUS: Record<string, { below: string; above: string }> = {
   "Knee flexion at midstance": { below: "Knee stays stiffer than typical", above: "Knee bends more than typical" },
   "Forward trunk lean": { below: "More upright than typical", above: "Leaning further forward than typical" },
   "Left/right symmetry": { below: "", above: "Left and right legs differ more than typical" },
-  "Step-time variation": { below: "", above: "Step timing is less even than typical" },
+  "Stride-time variation": { below: "", above: "Stride timing is less even than typical" },
 };
 
 function componentStatus(comparison: MetricComparison): string {
@@ -177,7 +177,7 @@ export const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({ report }) =>
             <p className="mt-1 text-xs leading-relaxed text-muted">
               {formScore.overallScore.value === null
                 ? formScore.overallScore.explanation
-                : "A weighted average of the six component scores. It's a screening summary, not a clinical assessment."}
+                : "A weighted average of the five component scores. It's a screening summary, not a clinical assessment."}
             </p>
             {formScore.observations.length > 0 && (
               <ul className="mt-4 space-y-1.5">

@@ -309,7 +309,8 @@ export function createPdfReport(report: CompleteAnalysisReport, sourceName: stri
       y += lines.length * 3.8 + 1.5;
     }
   }
-  drawFooter(doc, 1, 2);
+  const totalPages = report.evidence.length ? 3 : 2;
+  drawFooter(doc, 1, totalPages);
 
   doc.addPage();
   drawHeader(doc, report, sourceName, "KINEMATIC TRACES");
@@ -349,8 +350,57 @@ export function createPdfReport(report: CompleteAnalysisReport, sourceName: stri
   setTextColor(doc, COLORS.muted);
   doc.text("X axis: source video time (s) | Y axis: image-space angle (deg)", LEFT, y + 1);
   writeReferences(doc, y + 9, pageHeight - 15);
-  drawFooter(doc, 2, 2);
+  drawFooter(doc, 2, totalPages);
+
+  if (report.evidence.length) {
+    doc.addPage();
+    drawHeader(doc, report, sourceName, "EVIDENCE FRAMES");
+    writeEvidencePage(doc, report, pageHeight);
+    drawFooter(doc, 3, totalPages);
+  }
   return doc;
+}
+
+function writeEvidencePage(doc: jsPDF, report: CompleteAnalysisReport, pageHeight: number) {
+  let y = writeSectionTitle(doc, "FRAMES BEHIND THE SCORES", 35);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  setTextColor(doc, COLORS.muted);
+  doc.text(
+    doc.splitTextToSize("Representative video frames with each angle drawn as measured. For each leg, the frame closest to that leg's average value is shown.", CONTENT_WIDTH) as string[],
+    LEFT,
+    y
+  );
+  y += 8;
+  const gap = 6;
+  const columnWidth = (CONTENT_WIDTH - gap) / 2;
+  let column = 0;
+  let rowHeight = 0;
+  for (const evidence of report.evidence) {
+    const imageHeight = columnWidth * (evidence.height / evidence.width);
+    const blockHeight = imageHeight + 9;
+    if (column === 0 && y + blockHeight > pageHeight - 16) break;
+    const x = LEFT + column * (columnWidth + gap);
+    try {
+      doc.addImage(evidence.imageDataUrl, "JPEG", x, y, columnWidth, imageHeight);
+    } catch {
+      continue;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    setTextColor(doc, COLORS.ink);
+    doc.text(cleanText(`${evidence.title} - ${evidence.value.toFixed(1)} deg`), x, y + imageHeight + 4.5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    setTextColor(doc, COLORS.muted);
+    doc.text(`${evidence.timestamp.toFixed(2)} s`, x + columnWidth, y + imageHeight + 4.5, { align: "right" });
+    rowHeight = Math.max(rowHeight, blockHeight);
+    column = (column + 1) % 2;
+    if (column === 0) {
+      y += rowHeight + 4;
+      rowHeight = 0;
+    }
+  }
 }
 
 export function downloadPdfReport(report: CompleteAnalysisReport, sourceName: string): void {

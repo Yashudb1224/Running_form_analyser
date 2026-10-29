@@ -30,6 +30,9 @@ try {
     "src/lib/researchReferences.ts",
     "src/lib/metricComparison.ts",
     "src/lib/analysisQuality.ts",
+    "src/lib/evidenceFrames.ts",
+    "src/lib/overlayDrawing.ts",
+    "src/lib/legTracking.ts",
     "src/lib/pdfReport.ts",
     "src/lib/poseEstimator.ts",
   ], { cwd: root, stdio: "inherit" });

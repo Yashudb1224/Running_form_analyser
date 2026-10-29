@@ -33,6 +33,6 @@ Ground-contact and flight duration are not calculated. Distances are relative to
 
 ## Reference ranges
 
-There is no official optimal cadence, lean or joint angle. Each scored measure is compared with a research-typical range or clinical video-analysis guidance, defined with its citations in `src/lib/researchReferences.ts` (cadence 160-185 steps/min, forward trunk lean 3-12 deg, midstance knee flexion 35-50 deg, shank angle at foot strike 0-8 deg, symmetry index under 10%, step-time variation under 5%). Each component scores 100 inside its band and loses points outside it; the overall score is a weighted mean of the available components. It is a screening summary, not a validated assessment or a medical or injury-risk tool.
+There is no official optimal cadence, lean or joint angle. Each scored measure is compared with a research-typical range or clinical video-analysis guidance, defined with its citations in `src/lib/researchReferences.ts` (cadence 160-185 steps/min, forward trunk lean 3-12 deg, midstance knee flexion 35-50 deg, shank angle at foot strike 0-8 deg, symmetry index under 10%, stride-time variation under 5%). Each component scores 100 inside its band and loses points outside it; the overall score is a weighted mean of the available components. It is a screening summary, not a validated assessment or a medical or injury-risk tool.
 
 The Metric guide tab lists every range with its basis and full references. The PDF export contains recording quality, research comparisons, per-leg measurements, kinematic traces and references.

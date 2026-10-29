@@ -19,10 +19,11 @@ export const SymmetryBreakdown: React.FC<SymmetryBreakdownProps> = ({ report }) 
   const { symmetry, gait } = report;
   const palette = getChartPalette(useTheme().resolved);
   const { left: LEFT_COLOR, right: RIGHT_COLOR } = palette;
-  const legRows: [string, MetricResult, MetricResult, MetricResult | null][] = [
-    ["Knee flexion at midstance", gait.left.midstanceKneeFlexionDeg, gait.right.midstanceKneeFlexionDeg, symmetry.kneeFlexionSymmetryIndexPct],
-    ["Step time", gait.left.stepTimeSec, gait.right.stepTimeSec, symmetry.stepTimeSymmetryIndexPct],
-    ["Shank angle at foot strike", gait.left.footStrikeShankAngleDeg, gait.right.footStrikeShankAngleDeg, symmetry.shankAngleDifferenceDeg],
+  const legRows: [string, MetricResult, MetricResult, MetricResult | null, boolean][] = [
+    ["Step time", gait.left.stepTimeSec, gait.right.stepTimeSec, symmetry.stepTimeSymmetryIndexPct, false],
+    ["Landing ahead of hips", gait.left.landingOffsetTorsoPct, gait.right.landingOffsetTorsoPct, symmetry.landingOffsetSymmetryIndexPct, false],
+    ["Shank angle at foot strike", gait.left.footStrikeShankAngleDeg, gait.right.footStrikeShankAngleDeg, symmetry.shankAngleDifferenceDeg, false],
+    ["Knee flexion at midstance", gait.left.midstanceKneeFlexionDeg, gait.right.midstanceKneeFlexionDeg, symmetry.kneeFlexionSymmetryIndexPct, false],
   ];
   const barData = [
     { measure: "Midstance knee flexion", left: gait.left.midstanceKneeFlexionDeg.value, right: gait.right.midstanceKneeFlexionDeg.value },
@@ -31,7 +32,7 @@ export const SymmetryBreakdown: React.FC<SymmetryBreakdownProps> = ({ report }) 
   const metrics = [
     ["Cadence", gait.cadenceSpm],
     ["Mean step interval", gait.avgStepTimeSec],
-    ["Step-time variation", gait.stepTimeCvPct],
+    ["Stride-time variation", gait.strideTimeCvPct],
     ["Foot landing ahead of hip", gait.ankleAheadOfHipTorsoPct],
     ["Vertical oscillation", gait.verticalOscillationTorsoPct],
     ["Hip-line image tilt (max)", gait.maxHipLineImageTiltDeg],
@@ -58,22 +59,33 @@ export const SymmetryBreakdown: React.FC<SymmetryBreakdownProps> = ({ report }) 
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {legRows.map(([label, left, right, comparison]) => (
+              {legRows.map(([label, left, right, comparison, scored]) => (
                 <tr key={label}>
                   <th scope="row" className="px-4 py-3 font-medium text-body">{label}</th>
                   <td className="px-4 py-3 font-medium text-ink">{formatValue(left)}</td>
                   <td className="px-4 py-3 font-medium text-ink">{formatValue(right)}</td>
                   <td className="px-4 py-3">
                     {comparison === null || comparison.value === null ? <span className="text-muted">—</span> : (
-                      <span className={`status-pill ${comparison.unit === "%" && comparison.value > 10 ? "bg-warning/10 text-warning" : "bg-subtle text-body"}`}>
+                      <span className={`status-pill ${scored && comparison.value > 10 ? "bg-warning/10 text-warning" : "bg-subtle text-body"}`}>
                         {comparison.unit === "%" ? `SI ${comparison.value.toFixed(1)}%` : `Δ ${comparison.value.toFixed(1)}°`}
                       </span>
                     )}
                   </td>
                 </tr>
               ))}
+              <tr className="bg-card/60">
+                <th scope="row" className="px-4 py-3 font-semibold text-ink">Symmetry index (observed, not scored)</th>
+                <td className="px-4 py-3 text-muted" colSpan={2}>Mean of step time and landing</td>
+                <td className="px-4 py-3">
+                  {symmetry.symmetryIndexPct.value === null ? <span className="text-muted">—</span> : (
+                    <span className={`status-pill ${"bg-subtle text-body"}`}>
+                      SI {symmetry.symmetryIndexPct.value.toFixed(1)}%
+                    </span>
+                  )}
+                </td>
+              </tr>
               <tr>
-                <th scope="row" className="px-4 py-3 font-medium text-body">Stance events detected</th>
+                <th scope="row" className="px-4 py-3 font-medium text-body">Foot contacts detected</th>
                 <td className="px-4 py-3 font-medium text-ink">{gait.left.events}</td>
                 <td className="px-4 py-3 font-medium text-ink">{gait.right.events}</td>
                 <td className="px-4 py-3 text-muted">{gait.stepCount} steps used</td>
@@ -82,7 +94,7 @@ export const SymmetryBreakdown: React.FC<SymmetryBreakdownProps> = ({ report }) 
           </table>
         </div>
         <p className="border-t border-border bg-card px-4 py-2.5 text-[11px] leading-relaxed text-muted">
-          Symmetry index (SI) = |left − right| ÷ mean of both sides. Values under 10% are commonly treated as practically symmetric in gait research.
+          Symmetry index (SI) = |left − right| ÷ mean of both sides. Values under 10% are commonly treated as practically symmetric in gait research. Contacts are assigned to each leg from the alternation of your feet, so pose-model left/right swaps do not mix them up. The symmetry index averages step time and landing position, which are visible for both legs at foot strike. It is shown for information and does not affect the overall score.
         </p>
       </div>
 

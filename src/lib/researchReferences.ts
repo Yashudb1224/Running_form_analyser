@@ -43,7 +43,7 @@ export type ReferenceId =
   | "midstanceKneeFlexion"
   | "footStrikeShank"
   | "symmetryIndex"
-  | "stepTimeVariation";
+  | "strideTimeVariation";
 
 export const MIN_COMPONENT_SCORE = 40;
 
@@ -161,15 +161,15 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     scaleMaximum: 30,
     penaltyPerUnit: 3,
     basis: "research-typical",
-    summary: "The symmetry index is the left/right difference divided by the mean of the two sides. Healthy runners are rarely perfectly symmetric.",
+    summary: "The symmetry index is the left/right difference divided by the mean of the two sides, here averaged over step time and landing position. Healthy runners are rarely perfectly symmetric.",
     bandNote: "A symmetry index below 10% is a threshold widely used in gait research to describe practically symmetric movement. It is not a clinical injury cutoff.",
     guidanceBelow: "",
     guidanceAbove: "One side differs by more than 10%. If this persists across videos, or you have pain on one side, consider an in-person assessment.",
     citations: [CITATIONS.robinson1987],
   },
-  stepTimeVariation: {
-    id: "stepTimeVariation",
-    label: "Step-time variation",
+  strideTimeVariation: {
+    id: "strideTimeVariation",
+    label: "Stride-time variation",
     unit: "%",
     minimum: 0,
     maximum: 5,
@@ -180,7 +180,7 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     summary: "Steady-state running is highly regular. Higher variation can come from changes of pace, uneven terrain, fatigue, or tracking noise.",
     bandNote: "There is no published consensus threshold. The 5% band is an app rule that allows for video timing resolution (one frame is about 33 ms at 30 frames/s).",
     guidanceBelow: "",
-    guidanceAbove: "Step timing varies more than expected for steady running. Check that the clip shows constant-pace running on even ground.",
+    guidanceAbove: "Stride timing varies more than expected for steady running. Check that the clip shows constant-pace running on even ground.",
     citations: [CITATIONS.moore2016],
   },
 };

@@ -1,12 +1,14 @@
 import { AnalysisQuality, FramePose, GaitMetrics, KinematicSequence } from "../types/telemetry";
 import { assessCameraView } from "./biomechanics";
 import { MIN_TRACKING_COVERAGE, hasSufficientTrackingCoverage } from "./poseEstimator";
+import { MAX_MERGED_LEG_FRAMES_PCT } from "./symmetryAnalyzer";
 
 const MIN_STEPS_FOR_RELIABLE_SUMMARY = 6;
 
 interface SamplingInfo {
   samplingRateFps: number;
   sourceDurationSec: number;
+  legSwapEpisodes?: number;
 }
 
 export function buildAnalysisQuality(
@@ -42,6 +44,14 @@ export function buildAnalysisQuality(
     warnings.push(`Only ${gait.stepCount} consistent steps were detected; at least ${MIN_STEPS_FOR_RELIABLE_SUMMARY} give more stable averages. Use a clip with 5+ seconds of steady running.`);
   }
 
+  const legSwapEpisodes = sampling.legSwapEpisodes ?? 0;
+  if ((gait.mergedLegFramesPct ?? 0) > MAX_MERGED_LEG_FRAMES_PCT) {
+    warnings.push(`Both legs were tracked on top of each other in ${gait.mergedLegFramesPct?.toFixed(0)}% of frames, so per-leg values and symmetry are unreliable. A clearer side view with contrasting clothing usually helps.`);
+  }
+  if (gait.cadenceSpm.value === null && gait.cadenceSpm.explanation.includes("plausible")) {
+    warnings.push(gait.cadenceSpm.explanation);
+  }
+
   const sufficientForSummary = coverageOk && view !== "front-or-back" && view !== "unknown";
 
   return {
@@ -56,6 +66,7 @@ export function buildAnalysisQuality(
     cameraView: view,
     bodyWidthRatio,
     facingDirection: kinematics.facingDirection,
+    legSwapEpisodes,
     sufficientForSummary,
     message: sufficientForSummary
       ? "Tracking coverage and camera view meet the requirements for an overall score."

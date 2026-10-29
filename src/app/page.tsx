@@ -3,17 +3,20 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Header } from "@/components/Header";
 import { VideoUploader } from "@/components/VideoUploader";
-import { TelemetryPlayer } from "@/components/TelemetryPlayer";
+import { SeekRequest, TelemetryPlayer } from "@/components/TelemetryPlayer";
+import { EvidenceGallery } from "@/components/EvidenceGallery";
 import { ExecutiveSummary } from "@/components/ExecutiveSummary";
 import { MetricGuide } from "@/components/MetricGuide";
 import { KinematicCharts } from "@/components/KinematicCharts";
 import { SymmetryBreakdown } from "@/components/SymmetryBreakdown";
-import { AnalysisQuality, CompleteAnalysisReport, FramePose } from "@/types/telemetry";
+import { AnalysisQuality, CompleteAnalysisReport, EvidenceFrame, FramePose } from "@/types/telemetry";
 import { computeSequenceKinematics } from "@/lib/biomechanics";
 import { analyzeGaitCycles } from "@/lib/gaitCycle";
 import { evaluateSymmetryAndConsistency } from "@/lib/symmetryAnalyzer";
 import { calculateFormScore } from "@/lib/formScorer";
 import { buildAnalysisQuality } from "@/lib/analysisQuality";
+import { captureEvidenceFrames } from "@/lib/evidenceFrames";
+import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
 import { FileText, RefreshCw, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 
@@ -98,6 +101,7 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [report, setReport] = useState<CompleteAnalysisReport | null>(null);
   const [activeTab, setActiveTab] = useState<"summary" | "video" | "charts" | "symmetry" | "guide">("summary");
+  const [seekRequest, setSeekRequest] = useState<SeekRequest | null>(null);
   const activeJobRef = useRef(0);
   const estimatorRef = useRef<BrowserPoseEstimator | null>(null);
   const videoUrlRef = useRef<string | null>(null);
@@ -144,7 +148,7 @@ export default function Home() {
       const duration = video.duration;
       const analyzedDuration = Math.min(duration, MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS);
       const sampleCount = Math.min(MAX_SAMPLED_FRAMES, Math.max(1, Math.ceil(analyzedDuration * SAMPLE_RATE_FPS)));
-      const frames: FramePose[] = [];
+      const rawFrames: FramePose[] = [];
       let latestLandmarks: Parameters<typeof convertMediaPipeLandmarks>[0] = undefined;
 
       setProgressMessage("Loading MediaPipe Pose and model assets from jsDelivr…");
@@ -157,7 +161,9 @@ export default function Home() {
 
       for (let index = 0; index < sampleCount; index++) {
         if (jobId !== activeJobRef.current) return;
-        const requestedTime = Math.min(index / SAMPLE_RATE_FPS, Math.max(0, duration - 0.001));
+        // Seek to the middle of each sample interval: a seek to a frame's exact start time can round
+        // down to the previous frame, which would misalign landmarks, overlay and evidence frames.
+        const requestedTime = Math.min((index + 0.5) / SAMPLE_RATE_FPS, Math.max(0, duration - 0.001));
         setProgressMessage(`Seeking and tracking sample ${index + 1} of ${sampleCount}…`);
         const actualTime = await seekVideo(video, requestedTime);
         if (jobId !== activeJobRef.current) return;
@@ -165,7 +171,7 @@ export default function Home() {
         latestLandmarks = undefined;
         await estimator.sendFrame(video);
         if (jobId !== activeJobRef.current) return;
-        frames.push(latestLandmarks
+        rawFrames.push(latestLandmarks
           ? convertMediaPipeLandmarks(latestLandmarks, index, actualTime, video.videoWidth, video.videoHeight)
           : createUnavailableFrame(index, actualTime));
         setAnalysisProgress(5 + Math.round(((index + 1) / sampleCount) * 85));
@@ -176,6 +182,8 @@ export default function Home() {
       estimator = null;
 
       setProgressMessage("Calculating landmark-derived metrics…");
+      // Fix left/right leg swaps from the pose model before anything is measured.
+      const { frames, swapEpisodes } = correctLegSwaps(rawFrames);
       const kinematics = computeSequenceKinematics(frames);
       const gait = analyzeGaitCycles(
         frames.map((frame) => frame.timestamp),
@@ -187,9 +195,21 @@ export default function Home() {
       const quality = buildAnalysisQuality(frames, kinematics, gait, {
         samplingRateFps: SAMPLE_RATE_FPS,
         sourceDurationSec: duration,
+        legSwapEpisodes: swapEpisodes,
       });
       const symmetry = evaluateSymmetryAndConsistency(kinematics, gait);
       const formScore = calculateFormScore(kinematics, gait, symmetry, quality.sufficientForSummary);
+
+      setProgressMessage("Capturing evidence frames from the video…");
+      setAnalysisProgress(95);
+      let evidence: EvidenceFrame[] = [];
+      try {
+        evidence = await captureEvidenceFrames(video, { frames, kinematics, gait }, (time) => seekVideo(video, time));
+      } catch (error) {
+        console.error("Could not capture evidence frames:", error);
+      }
+      if (jobId !== activeJobRef.current) return;
+
       const compiledReport: CompleteAnalysisReport = {
         totalFrames: frames.length,
         fps: SAMPLE_RATE_FPS,
@@ -202,6 +222,7 @@ export default function Home() {
         symmetry,
         formScore,
         quality,
+        evidence,
       };
       setReport(compiledReport);
       setAnalysisProgress(100);
@@ -238,6 +259,12 @@ export default function Home() {
     void analyzeVideo(url);
   };
 
+  const openInVideo = (time: number) => {
+    setSeekRequest({ time, id: Date.now() });
+    setActiveTab("video");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const resetAnalysis = () => {
     activeJobRef.current++;
     const processingVideo = processingVideoRef.current;
@@ -259,6 +286,7 @@ export default function Home() {
     setIsAnalyzing(false);
     setAnalysisProgress(0);
     setProgressMessage("");
+    setSeekRequest(null);
     setActiveTab("summary");
   };
 
@@ -335,7 +363,10 @@ export default function Home() {
                 {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
                   <button
                     key={tab}
-                    onClick={() => setActiveTab(tab)}
+                    onClick={() => {
+                      setSeekRequest(null);
+                      setActiveTab(tab);
+                    }}
                     role="tab"
                     aria-selected={activeTab === tab}
                     aria-controls={`${tab}-report-panel`}
@@ -354,8 +385,24 @@ export default function Home() {
               </div>
             </div>
 
-            {activeTab === "summary" && <div role="tabpanel" id="summary-report-panel" aria-labelledby="summary-report-tab" className="pt-2"><ExecutiveSummary report={report} /></div>}
-            {activeTab === "video" && <div role="tabpanel" id="video-report-panel" aria-labelledby="video-report-tab" className="pt-2"><TelemetryPlayer videoUrl={videoUrl} frames={report.frames} kinematics={report.kinematics} fps={report.fps} /></div>}
+            {activeTab === "summary" && (
+              <div role="tabpanel" id="summary-report-panel" aria-labelledby="summary-report-tab" className="space-y-8 pt-2">
+                <ExecutiveSummary report={report} />
+                <EvidenceGallery report={report} onOpenInVideo={openInVideo} />
+              </div>
+            )}
+            {activeTab === "video" && (
+              <div role="tabpanel" id="video-report-panel" aria-labelledby="video-report-tab" className="pt-2">
+                <TelemetryPlayer
+                  videoUrl={videoUrl}
+                  frames={report.frames}
+                  kinematics={report.kinematics}
+                  events={report.gait.events}
+                  fps={report.fps}
+                  seekRequest={seekRequest}
+                />
+              </div>
+            )}
             {activeTab === "charts" && <div role="tabpanel" id="charts-report-panel" aria-labelledby="charts-report-tab" className="pt-2"><KinematicCharts report={report} /></div>}
             {activeTab === "symmetry" && <div role="tabpanel" id="symmetry-report-panel" aria-labelledby="symmetry-report-tab" className="pt-2"><SymmetryBreakdown report={report} /></div>}
             {activeTab === "guide" && <div role="tabpanel" id="guide-report-panel" aria-labelledby="guide-report-tab" className="pt-2"><MetricGuide /></div>}

@@ -1,12 +1,13 @@
 import { FormScoreData, GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
 import { REFERENCE_RANGES, ReferenceRange, getReferenceGuidance, scoreAgainstReference } from "./researchReferences";
 
+// Left/right symmetry is reported as observed only: from a single side-on clip the far leg is tracked
+// less reliably than the near leg, so it does not feed the overall score.
 const COMPONENT_WEIGHTS = {
-  cadence: 0.2,
-  footStrike: 0.2,
-  kneeFlexion: 0.15,
-  posture: 0.15,
-  symmetry: 0.2,
+  cadence: 0.25,
+  footStrike: 0.25,
+  kneeFlexion: 0.2,
+  posture: 0.2,
   consistency: 0.1,
 } as const;
 const MIN_COMPONENTS_FOR_COMPOSITE = 4;
@@ -50,7 +51,6 @@ export function calculateFormScore(
         ? "Running direction is unknown, so forward lean cannot be signed."
         : "A valid shoulder and hip midpoint was not available."
     ),
-    symmetry: symmetry.symmetryScore,
     consistency: symmetry.consistencyScore,
   };
 
@@ -91,10 +91,7 @@ export function calculateFormScore(
   addObservation(REFERENCE_RANGES.cadence, cadence);
   addObservation(REFERENCE_RANGES.midstanceKneeFlexion, knee);
   addObservation(REFERENCE_RANGES.trunkLean, lean);
-  const symmetryValues = [symmetry.kneeFlexionSymmetryIndexPct.value, symmetry.stepTimeSymmetryIndexPct.value]
-    .filter((value): value is number => value !== null);
-  if (symmetryValues.length) addObservation(REFERENCE_RANGES.symmetryIndex, Math.max(...symmetryValues));
-  addObservation(REFERENCE_RANGES.stepTimeVariation, gait.stepTimeCvPct.value);
+  addObservation(REFERENCE_RANGES.strideTimeVariation, gait.strideTimeCvPct.value);
   if (!observations.length && overall.value !== null) {
     observations.push("All scored measures are within their reference ranges.");
   }

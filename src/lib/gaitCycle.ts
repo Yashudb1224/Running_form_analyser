@@ -1,15 +1,19 @@
 import { FootStrikeEvent, FramePose, GaitMetrics, KinematicSequence, Landmark, LegSummary, metric, unavailableMetric } from "../types/telemetry";
 import { calculateShankAngle } from "./biomechanics";
+import { mergedLegFramePct } from "./legTracking";
 import { smoothArray } from "./signalProcessor";
 
 const MIN_VISIBILITY = 0.5;
-/** Same-leg stance peaks are a full stride apart; even very high cadences leave more than 0.4 s. */
-const SAME_LEG_MIN_SEPARATION_SEC = 0.4;
 /** Fraction of the ankle's vertical range below its stance peak still treated as foot on the ground. */
 const STANCE_WINDOW_FRACTION = 0.12;
 const MAX_STANCE_HALF_WINDOW_SEC = 0.3;
 const MIN_INTERVALS_FOR_CADENCE = 2;
 const MIN_INTERVALS_FOR_VARIATION = 4;
+const SMOOTHING_WINDOW = 5;
+/** 0.2 s per step is 300 steps/min, faster than elite sprinting. */
+const MIN_STEP_SEC = 0.2;
+const MIN_PLAUSIBLE_CADENCE = 100;
+const MAX_PLAUSIBLE_CADENCE = 260;
 
 function validPoint(point: Landmark | null | undefined): point is Landmark {
   return Boolean(point && point.visibility !== null && point.visibility >= MIN_VISIBILITY);
@@ -43,7 +47,9 @@ export function findPeaks(
   data: (number | null)[],
   timestamps: number[],
   minimumSeparationSec: number,
-  prominence: number
+  prominence: number,
+  /** Neighbourhood (seconds either side) used to measure prominence; defaults to 3 samples. */
+  prominenceWindowSec?: number
 ): number[] {
   const peaks: number[] = [];
   let lastPeakTime = -Infinity;
@@ -70,9 +76,9 @@ export function findPeaks(
       continue;
     }
 
-    const windowStart = Math.max(0, peakIndex - 3);
-    const windowEnd = Math.min(data.length, peakIndex + 4);
-    const neighborhood = finiteValues(data.slice(windowStart, windowEnd));
+    const neighborhood = prominenceWindowSec === undefined
+      ? finiteValues(data.slice(Math.max(0, peakIndex - 3), Math.min(data.length, peakIndex + 4)))
+      : finiteValues(data.filter((_, index) => Math.abs(timestamps[index] - time) <= prominenceWindowSec));
     if (neighborhood.length < 3) {
       index = plateauEnd;
       continue;
@@ -121,56 +127,94 @@ function hipCenterAt(frame: FramePose | undefined, leg: "left" | "right"): Landm
   return validPoint(sameSide) ? sameSide : null;
 }
 
-function detectLegEvents(
+/**
+ * Builds one foot-contact event at a peak of the contact signal for the given leg: the stance window
+ * around it, approximate foot strike, midstance knee flexion, shank angle and landing offset.
+ */
+function buildContactEvent(
   leg: "left" | "right",
-  smoothed: (number | null)[],
+  peak: number,
+  contactSignal: (number | null)[],
+  stanceThresholdDrop: number,
   timestamps: number[],
-  prominence: number,
   kinematics: KinematicSequence,
   frames: FramePose[]
-): FootStrikeEvent[] {
-  const valid = finiteValues(smoothed);
-  if (valid.length < 3) return [];
-  const legRange = percentile(valid, 0.95) - percentile(valid, 0.05);
+): FootStrikeEvent {
   const kneeAngles = leg === "left" ? kinematics.leftKneeAngles : kinematics.rightKneeAngles;
   const kneeIndex = leg === "left" ? 25 : 26;
   const ankleIndex = leg === "left" ? 27 : 28;
   const facing = kinematics.facingDirection;
+  const threshold = (contactSignal[peak] as number) - stanceThresholdDrop;
+  const inStance = (index: number) => {
+    const value = contactSignal[index];
+    return value !== null && value >= threshold && Math.abs(timestamps[index] - timestamps[peak]) <= MAX_STANCE_HALF_WINDOW_SEC;
+  };
+  let strikeFrame = peak;
+  while (strikeFrame > 0 && inStance(strikeFrame - 1)) strikeFrame--;
+  let toeOffFrame = peak;
+  while (toeOffFrame < contactSignal.length - 1 && inStance(toeOffFrame + 1)) toeOffFrame++;
 
-  return findPeaks(smoothed, timestamps, SAME_LEG_MIN_SEPARATION_SEC, prominence).map((peak) => {
-    const peakValue = smoothed[peak] as number;
-    const threshold = peakValue - STANCE_WINDOW_FRACTION * legRange;
-    const inStance = (index: number) => {
-      const value = smoothed[index];
-      return (
-        value !== null && value >= threshold &&
-        Math.abs(timestamps[index] - timestamps[peak]) <= MAX_STANCE_HALF_WINDOW_SEC
-      );
-    };
-    let strikeFrame = peak;
-    while (strikeFrame > 0 && inStance(strikeFrame - 1)) strikeFrame--;
-    let toeOffFrame = peak;
-    while (toeOffFrame < smoothed.length - 1 && inStance(toeOffFrame + 1)) toeOffFrame++;
+  let maxFlexion: number | null = null;
+  let midstanceFrame = peak;
+  for (let index = strikeFrame; index <= toeOffFrame; index++) {
+    const angle = kneeAngles[index];
+    if (angle === null || angle === undefined || !Number.isFinite(angle)) continue;
+    if (maxFlexion === null || 180 - angle > maxFlexion) {
+      maxFlexion = 180 - angle;
+      midstanceFrame = index;
+    }
+  }
+  const strike = frames[strikeFrame];
+  const rawShank = calculateShankAngle(strike?.landmarks[kneeIndex], strike?.landmarks[ankleIndex]);
+  const ankle = strike?.landmarks[ankleIndex];
+  const hip = hipCenterAt(strike, leg);
+  const torso = kinematics.torsoHeightPx[strikeFrame];
 
-    const flexions = finiteValues(kneeAngles.slice(strikeFrame, toeOffFrame + 1)).map((angle) => 180 - angle);
-    const strike = frames[strikeFrame];
-    const rawShank = calculateShankAngle(strike?.landmarks[kneeIndex], strike?.landmarks[ankleIndex]);
-    const ankle = strike?.landmarks[ankleIndex];
-    const hip = hipCenterAt(strike, leg);
-    const torso = kinematics.torsoHeightPx[strikeFrame];
+  return {
+    leg,
+    side: leg,
+    stanceFrame: peak,
+    stanceTime: refinePeakTime(contactSignal, timestamps, peak),
+    strikeFrame,
+    midstanceFrame,
+    shankAngleDeg: rawShank === null || facing === null ? null : rawShank * facing,
+    ankleAheadOfHipPct: validPoint(ankle) && hip && facing !== null && torso && torso > 0
+      ? (((ankle.x - hip.x) * facing) / torso) * 100
+      : null,
+    midstanceKneeFlexionDeg: maxFlexion,
+  };
+}
 
-    return {
-      leg,
-      stanceFrame: peak,
-      stanceTime: refinePeakTime(smoothed, timestamps, peak),
-      strikeFrame,
-      shankAngleDeg: rawShank === null || facing === null ? null : rawShank * facing,
-      ankleAheadOfHipPct: validPoint(ankle) && hip && facing !== null && torso && torso > 0
-        ? (((ankle.x - hip.x) * facing) / torso) * 100
-        : null,
-      midstanceKneeFlexionDeg: flexions.length ? Math.max(...flexions) : null,
-    };
-  });
+/**
+ * Assigns each contact to a physical leg. Feet always alternate, so within a run of evenly spaced
+ * contacts every other contact is the same leg, whatever the pose model labelled it. A gap longer
+ * than 1.5 steps (a missed contact) starts a new run, because the alternation may have slipped.
+ * Each run's two alternating groups are named left/right by majority vote of the landmark labels.
+ */
+export function assignSides(events: Pick<FootStrikeEvent, "leg" | "stanceTime">[]): ("left" | "right")[] {
+  if (!events.length) return [];
+  const intervals = events.slice(1).map((event, index) => event.stanceTime - events[index].stanceTime);
+  const typicalStep = median(intervals.filter((interval) => interval > 0)) ?? Infinity;
+  const sides: ("left" | "right")[] = new Array(events.length);
+  let runStart = 0;
+  const closeRun = (runEnd: number) => {
+    let vote = 0;
+    for (let index = runStart; index <= runEnd; index++) {
+      const parityIsEven = (index - runStart) % 2 === 0;
+      vote += (events[index].leg === "left") === parityIsEven ? 1 : -1;
+    }
+    const evenSide = vote >= 0 ? "left" : "right";
+    const oddSide = evenSide === "left" ? "right" : "left";
+    for (let index = runStart; index <= runEnd; index++) sides[index] = (index - runStart) % 2 === 0 ? evenSide : oddSide;
+  };
+  for (let index = 1; index < events.length; index++) {
+    if (intervals[index - 1] > typicalStep * 1.5) {
+      closeRun(index - 1);
+      runStart = index;
+    }
+  }
+  closeRun(events.length - 1);
+  return sides;
 }
 
 function emptyLegSummary(reason: string): LegSummary {
@@ -178,6 +222,7 @@ function emptyLegSummary(reason: string): LegSummary {
     midstanceKneeFlexionDeg: unavailableMetric("deg", reason),
     footStrikeShankAngleDeg: unavailableMetric("deg", reason),
     stepTimeSec: unavailableMetric("s", reason),
+    landingOffsetTorsoPct: unavailableMetric("% torso", reason),
     events: 0,
   };
 }
@@ -194,9 +239,12 @@ function emptyGaitMetrics(reason: string): GaitMetrics {
     footStrikeShankAngleDeg: unavailableMetric("deg", reason),
     midstanceKneeFlexionDeg: unavailableMetric("deg", reason),
     maxHipLineImageTiltDeg: unavailableMetric("deg", reason),
-    stepTimeCvPct: unavailableMetric("%", reason),
+    strideTimeCvPct: unavailableMetric("%", reason),
     stepCount: 0,
+    strideCount: 0,
+    medianStrideSec: null,
     events: [],
+    mergedLegFramesPct: null,
     left: emptyLegSummary(reason),
     right: emptyLegSummary(reason),
     leftContacts: [],
@@ -207,7 +255,8 @@ function emptyGaitMetrics(reason: string): GaitMetrics {
 const FACING_REASON = "Running direction could not be determined, so forward and backward cannot be distinguished.";
 
 function legSummary(leg: "left" | "right", events: FootStrikeEvent[], stepTimes: number[], facingKnown: boolean): LegSummary {
-  const legEvents = events.filter((event) => event.leg === leg);
+  const legEvents = events.filter((event) => event.side === leg);
+  const offset = mean(finiteValues(legEvents.map((event) => event.ankleAheadOfHipPct)));
   const flexion = mean(finiteValues(legEvents.map((event) => event.midstanceKneeFlexionDeg)));
   const shank = mean(finiteValues(legEvents.map((event) => event.shankAngleDeg)));
   return {
@@ -219,6 +268,12 @@ function legSummary(leg: "left" | "right", events: FootStrikeEvent[], stepTimes:
       facingKnown ? `Mean ${leg} shank angle at approximate foot strike.` : FACING_REASON
     ),
     stepTimeSec: metric(mean(stepTimes), "algorithmically-estimated", "s", `Mean duration of steps ending on the ${leg} foot.`),
+    landingOffsetTorsoPct: metric(
+      round1(offset),
+      "algorithmically-estimated",
+      "% torso",
+      facingKnown ? `Mean distance the ${leg} foot lands ahead of the hips, relative to torso length.` : FACING_REASON
+    ),
     events: legEvents.length,
   };
 }
@@ -241,12 +296,29 @@ export function analyzeGaitCycles(
   }
 
   const prominence = Math.max(1, range * 0.08);
-  const leftSmooth = smoothArray(leftAnkleY, 3);
-  const rightSmooth = smoothArray(rightAnkleY, 3);
-  const events = [
-    ...detectLegEvents("left", leftSmooth, timestamps, prominence, kinematics, frames),
-    ...detectLegEvents("right", rightSmooth, timestamps, prominence, kinematics, frames),
-  ].sort((a, b) => a.stanceTime - b.stanceTime);
+  const leftSmooth = smoothArray(leftAnkleY, SMOOTHING_WINDOW);
+  const rightSmooth = smoothArray(rightAnkleY, SMOOTHING_WINDOW);
+
+  // Contacts are found on a label-free signal: the lower of the two ankles in each frame (larger image
+  // y). It is identical whether or not the pose model swapped the legs, and peaks once per landing.
+  // Each landing is then attributed to whichever ankle is lower at that moment.
+  // Combine before smoothing so a label flip never blends the two feet inside the smoothing window.
+  const contactSignal = smoothArray(leftAnkleY.map((left, index) => {
+    const right = rightAnkleY[index];
+    if (left === null || !Number.isFinite(left)) return right;
+    if (right === null || !Number.isFinite(right)) return left;
+    return Math.max(left, right);
+  }), SMOOTHING_WINDOW);
+  const ankleRange = percentile(validAnkleY, 0.95) - percentile(validAnkleY, 0.05);
+  const events = findPeaks(contactSignal, timestamps, MIN_STEP_SEC * 0.9, prominence, MIN_STEP_SEC).map((peak) => {
+    const left = leftSmooth[peak];
+    const right = rightSmooth[peak];
+    const leg = right !== null && (left === null || right > left) ? "right" as const : "left" as const;
+    return buildContactEvent(leg, peak, contactSignal, STANCE_WINDOW_FRACTION * ankleRange, timestamps, kinematics, frames);
+  });
+  assignSides(events).forEach((side, index) => {
+    events[index].side = side;
+  });
 
   // Steps run between alternating-leg events; same-leg neighbours mean an event was missed.
   const steps: { duration: number; endLeg: "left" | "right"; start: FootStrikeEvent; end: FootStrikeEvent }[] = [];
@@ -254,8 +326,8 @@ export function analyzeGaitCycles(
     const start = events[index - 1];
     const end = events[index];
     const duration = end.stanceTime - start.stanceTime;
-    if (start.leg !== end.leg && Number.isFinite(duration) && duration > 0) {
-      steps.push({ duration, endLeg: end.leg, start, end });
+    if (start.side !== end.side && Number.isFinite(duration) && duration > 0) {
+      steps.push({ duration, endLeg: end.side, start, end });
     }
   }
   const rawMedian = median(steps.map((step) => step.duration));
@@ -263,18 +335,45 @@ export function analyzeGaitCycles(
     ? []
     : steps.filter((step) => step.duration >= rawMedian * 0.6 && step.duration <= rawMedian * 1.6);
   const durations = keptSteps.map((step) => step.duration);
-  const hasCadence = durations.length >= MIN_INTERVALS_FOR_CADENCE;
-  const medianStep = hasCadence ? median(durations) : null;
-  const meanStep = hasCadence ? mean(durations) : null;
-  const cadence = medianStep ? 60 / medianStep : null;
-  const stepCv = durations.length >= MIN_INTERVALS_FOR_VARIATION && meanStep
-    ? (Math.sqrt(durations.reduce((sum, duration) => sum + (duration - meanStep) ** 2, 0) / durations.length) / meanStep) * 100
+
+  // A stride is measured from each contact to the contact after next, ignoring leg labels. That spans
+  // one contact of each foot, so a constant timing error on one leg (typical for the partly hidden far
+  // leg) cancels out, and left/right label swaps by the pose model cannot affect it. Left-to-right
+  // step intervals, by contrast, alternate short/long under such an error.
+  const strides: number[] = [];
+  for (let index = 2; index < events.length; index++) {
+    const duration = events[index].stanceTime - events[index - 2].stanceTime;
+    if (Number.isFinite(duration) && duration > 0) strides.push(duration);
+  }
+  const rawStrideMedian = median(strides);
+  // A missed contact turns a stride into three steps (1.5x) and an extra one into a single step (0.5x).
+  const keptStrides = rawStrideMedian === null
+    ? []
+    : strides.filter((duration) => duration >= rawStrideMedian * 0.7 && duration <= rawStrideMedian * 1.3);
+
+  const useStrides = keptStrides.length >= MIN_INTERVALS_FOR_CADENCE;
+  const enoughSteps = useStrides || durations.length >= MIN_INTERVALS_FOR_CADENCE;
+  const medianStepTime = useStrides
+    ? (median(keptStrides) as number) / 2
+    : enoughSteps ? median(durations) : null;
+  const rawCadence = medianStepTime ? 60 / medianStepTime : null;
+  const plausible = rawCadence !== null && rawCadence >= MIN_PLAUSIBLE_CADENCE && rawCadence <= MAX_PLAUSIBLE_CADENCE;
+  const hasCadence = enoughSteps && plausible;
+  const cadence = hasCadence ? rawCadence : null;
+  const meanStep = !hasCadence ? null : useStrides ? (mean(keptStrides) as number) / 2 : mean(durations);
+  const meanStride = mean(keptStrides);
+  const strideCv = hasCadence && keptStrides.length >= MIN_INTERVALS_FOR_VARIATION && meanStride
+    ? (Math.sqrt(keptStrides.reduce((sum, duration) => sum + (duration - meanStride) ** 2, 0) / keptStrides.length) / meanStride) * 100
     : null;
-  const cadenceReason = "At least three alternating left/right stance events are needed for a cadence estimate.";
+  const cadenceReason = enoughSteps && !plausible
+    ? `The detected step rate (${rawCadence?.toFixed(0)} steps/min) is outside the plausible ${MIN_PLAUSIBLE_CADENCE}-${MAX_PLAUSIBLE_CADENCE} range, which indicates unreliable foot tracking.`
+    : "At least four foot contacts are needed for a cadence estimate.";
+  // Implausible timing means the events are not real steps, so nothing step-based is reported.
+  const usableSteps = hasCadence ? keptSteps : [];
 
   // Vertical oscillation: pelvis range within each step, so slow drift across the clip is ignored.
   const torsoMedian = median(finiteValues(kinematics.torsoHeightPx));
-  const stepRanges = keptSteps.flatMap((step) => {
+  const stepRanges = usableSteps.flatMap((step) => {
     const values = finiteValues(kinematics.pelvisCenterY.slice(step.start.stanceFrame, step.end.stanceFrame + 1));
     return values.length >= 3 ? [Math.max(...values) - Math.min(...values)] : [];
   });
@@ -286,6 +385,7 @@ export function analyzeGaitCycles(
   const offsets = finiteValues(events.map((event) => event.ankleAheadOfHipPct));
   const flexions = finiteValues(events.map((event) => event.midstanceKneeFlexionDeg));
   const pelvicValues = finiteValues(kinematics.hipLineImageTiltAngles);
+  const mergedLegs = mergedLegFramePct(frames, kinematics.torsoHeightPx);
 
   return {
     cadenceSpm: metric(
@@ -293,10 +393,12 @@ export function analyzeGaitCycles(
       "algorithmically-estimated",
       "steps/min",
       hasCadence
-        ? `60 / median step time over ${durations.length} alternating steps detected from ankle trajectories (sub-frame timing).`
+        ? useStrides
+          ? `120 / median stride time over ${keptStrides.length} strides (each contact to the contact after next) detected from ankle trajectories with sub-frame timing.`
+          : `60 / median step time over ${durations.length} alternating steps detected from ankle trajectories (sub-frame timing).`
         : cadenceReason
     ),
-    avgStepTimeSec: metric(meanStep, "algorithmically-estimated", "s", hasCadence ? "Mean interval between alternating left/right stance events." : cadenceReason),
+    avgStepTimeSec: metric(meanStep, "algorithmically-estimated", "s", hasCadence ? "Mean step time (half the mean stride time)." : cadenceReason),
     groundContactTimeMs: unavailableMetric("ms", "Video sampling and 2D landmarks do not directly identify foot-ground contact."),
     flightTimeMs: unavailableMetric("ms", "Video sampling and 2D landmarks do not directly identify foot-ground contact."),
     dutyFactorPct: unavailableMetric("%", "Not calculated because contact and flight durations are unavailable."),
@@ -334,19 +436,22 @@ export function analyzeGaitCycles(
       "deg",
       "Maximum absolute image-plane angle of the line joining the two tracked hip landmarks."
     ),
-    stepTimeCvPct: metric(
-      round1(stepCv),
+    strideTimeCvPct: metric(
+      round1(strideCv),
       "algorithmically-estimated",
       "%",
-      stepCv === null
-        ? `At least ${MIN_INTERVALS_FOR_VARIATION} consistent steps are needed to estimate variation.`
-        : "Coefficient of variation of detected step intervals after removing missed-event outliers."
+      strideCv === null
+        ? `At least ${MIN_INTERVALS_FOR_VARIATION} consistent strides are needed to estimate variation.`
+        : "Coefficient of variation of stride times (each contact to the contact after next) after removing missed-contact outliers."
     ),
-    stepCount: durations.length,
+    stepCount: usableSteps.length,
+    strideCount: hasCadence ? keptStrides.length : 0,
+    medianStrideSec: hasCadence && useStrides ? median(keptStrides) : null,
     events,
-    left: legSummary("left", events, keptSteps.filter((step) => step.endLeg === "left").map((step) => step.duration), facingKnown),
-    right: legSummary("right", events, keptSteps.filter((step) => step.endLeg === "right").map((step) => step.duration), facingKnown),
-    leftContacts: events.filter((event) => event.leg === "left").map((event) => event.stanceFrame),
-    rightContacts: events.filter((event) => event.leg === "right").map((event) => event.stanceFrame),
+    mergedLegFramesPct: mergedLegs === null ? null : round1(mergedLegs),
+    left: legSummary("left", events, usableSteps.filter((step) => step.endLeg === "left").map((step) => step.duration), facingKnown),
+    right: legSummary("right", events, usableSteps.filter((step) => step.endLeg === "right").map((step) => step.duration), facingKnown),
+    leftContacts: events.filter((event) => event.side === "left").map((event) => event.stanceFrame),
+    rightContacts: events.filter((event) => event.side === "right").map((event) => event.stanceFrame),
   };
 }

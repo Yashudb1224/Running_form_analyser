@@ -8,12 +8,14 @@ import {
   computeSequenceKinematics,
   detectFacingDirection,
 } from "../src/lib/biomechanics";
-import { analyzeGaitCycles, findPeaks, refinePeakTime } from "../src/lib/gaitCycle";
+import { analyzeGaitCycles, assignSides, findPeaks, refinePeakTime } from "../src/lib/gaitCycle";
 import { calculateFormScore } from "../src/lib/formScorer";
 import { getMetricComparisons } from "../src/lib/metricComparison";
 import { createPdfReport, formatPdfMetric } from "../src/lib/pdfReport";
 import { evaluateSymmetryAndConsistency, symmetryIndex } from "../src/lib/symmetryAnalyzer";
 import { buildAnalysisQuality } from "../src/lib/analysisQuality";
+import { selectEvidenceMoments } from "../src/lib/evidenceFrames";
+import { correctLegSwaps, mergedLegFramePct } from "../src/lib/legTracking";
 import { REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
 import { convertMediaPipeLandmarks, createUnavailableFrame, hasSufficientTrackingCoverage } from "../src/lib/poseEstimator";
 import { CompleteAnalysisReport, FramePose, GaitMetrics, KinematicSequence, Landmark, metric } from "../src/types/telemetry";
@@ -79,6 +81,7 @@ function reportFrom(kinematics: KinematicSequence, gait: GaitMetrics, frames: Fr
     symmetry,
     formScore,
     quality: { ...quality, sufficientForSummary: sufficient },
+    evidence: [],
   };
 }
 
@@ -201,7 +204,7 @@ test("cadence from a 30 fps ankle trajectory is accurate to within 1 step/min", 
   assert.ok(Math.abs(gait.cadenceSpm.value - cadence) < 1, `cadence ${gait.cadenceSpm.value}`);
   assert.equal(gait.cadenceSpm.status, "algorithmically-estimated");
   assert.ok(gait.stepCount >= 10);
-  assert.ok(gait.stepTimeCvPct.value !== null && gait.stepTimeCvPct.value < 2);
+  assert.ok(gait.strideTimeCvPct.value !== null && gait.strideTimeCvPct.value < 2);
   assert.equal(gait.groundContactTimeMs.value, null);
 });
 
@@ -241,9 +244,17 @@ test("symmetry index compares per-leg events and flags differences over 10%", ()
   const gait = analyzeGaitCycles([], [], [], emptyKinematics(), []);
   gait.left.midstanceKneeFlexionDeg = metric(45, "algorithmically-estimated", "deg", "test");
   gait.right.midstanceKneeFlexionDeg = metric(36, "algorithmically-estimated", "deg", "test");
+  gait.left.stepTimeSec = metric(0.36, "algorithmically-estimated", "s", "test");
+  gait.right.stepTimeSec = metric(0.36, "algorithmically-estimated", "s", "test");
+  gait.left.landingOffsetTorsoPct = metric(44, "algorithmically-estimated", "% torso", "test");
+  gait.right.landingOffsetTorsoPct = metric(40, "algorithmically-estimated", "% torso", "test");
   const symmetry = evaluateSymmetryAndConsistency(emptyKinematics(), gait);
-  assert.equal(symmetry.kneeFlexionSymmetryIndexPct.value, 22.2);
-  assert.equal(symmetry.symmetryScore.value, scoreAgainstReference(REFERENCE_RANGES.symmetryIndex, 22.2222));
+  assert.equal(symmetry.kneeFlexionSymmetryIndexPct.value, 22.2, "knee flexion SI is reported");
+  assert.equal(symmetry.stepTimeSymmetryIndexPct.value, 0);
+  assert.equal(symmetry.landingOffsetSymmetryIndexPct.value, 9.5);
+  // Scored from the mean of step time (0%) and landing (9.52%), not from knee flexion.
+  assert.equal(symmetry.symmetryIndexPct.value, 4.8);
+  assert.equal(symmetry.symmetryScore.value, 100);
 });
 
 test("reference scoring is 100 inside the band and decreases outside it", () => {
@@ -328,4 +339,147 @@ test("PDF report contains a structured summary, kinematic traces and references"
   assert.ok(output.includes("METRIC COMPARISON"));
   assert.ok(output.includes("RESEARCH REFERENCE"));
   assert.ok(output.includes("REFERENCES"));
+});
+
+test("evidence moments pick the most representative foot strike, midstance and trunk frame", () => {
+  const strideSec = 0.7;
+  const frames = Array.from({ length: 150 }, (_, index) => {
+    const time = index / 30;
+    return sideViewFrame(index, time, {
+      leftAnkleY: 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec),
+      rightAnkleY: 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI),
+    });
+  });
+  const kinematics = computeSequenceKinematics(frames);
+  const gait = analyzeGaitCycles(frames.map((frame) => frame.timestamp), kinematics.leftAnkleY, kinematics.rightAnkleY, kinematics, frames);
+  const moments = selectEvidenceMoments({ frames, kinematics, gait });
+  assert.deepEqual(moments.map((moment) => moment.id), ["foot-strike-left", "foot-strike-right", "midstance-left", "midstance-right", "trunk-lean"]);
+  const leftStrikes = gait.events.filter((event) => event.leg === "left" && event.shankAngleDeg !== null);
+  assert.ok(leftStrikes.some((event) => event.strikeFrame === moments[0].frameIndex));
+  for (const event of gait.events) {
+    assert.ok(event.midstanceFrame >= event.strikeFrame);
+  }
+});
+
+test("evidence selection returns nothing when no events or lean were measured", () => {
+  const gait = analyzeGaitCycles([], [], [], emptyKinematics(), []);
+  assert.deepEqual(selectEvidenceMoments({ frames: [], kinematics: emptyKinematics(), gait }), []);
+});
+
+function runningFrames(count: number, strideSec: number, options: { swapFrom?: number; mergeLegs?: boolean } = {}): FramePose[] {
+  return Array.from({ length: count }, (_, index) => {
+    const time = (index + 0.5) / 30;
+    const phase = (2 * Math.PI * time) / strideSec;
+    const frame = sideViewFrame(index, time, {
+      leftAnkleY: 500 + 40 * Math.cos(phase),
+      rightAnkleY: 500 + 40 * Math.cos(phase + Math.PI),
+    });
+    // Legs swing forward and back out of phase, like a real side view.
+    frame.landmarks[25] = landmark(300 + 40 * Math.sin(phase), 400);
+    frame.landmarks[26] = landmark(300 - 40 * Math.sin(phase), 400);
+    frame.landmarks[27] = landmark(320 + 80 * Math.sin(phase), 500 + 40 * Math.cos(phase));
+    frame.landmarks[28] = landmark(320 - 80 * Math.sin(phase), 500 + 40 * Math.cos(phase + Math.PI));
+    if (options.mergeLegs) {
+      for (const [left, right] of [[25, 26], [27, 28], [29, 30], [31, 32]]) frame.landmarks[right] = frame.landmarks[left];
+    }
+    if (options.swapFrom !== undefined && index >= options.swapFrom) {
+      for (const [left, right] of [[25, 26], [27, 28], [29, 30], [31, 32]]) {
+        const swap = frame.landmarks[left];
+        frame.landmarks[left] = frame.landmarks[right];
+        frame.landmarks[right] = swap;
+      }
+    }
+    return frame;
+  });
+}
+
+function gaitFor(frames: FramePose[]) {
+  const kinematics = computeSequenceKinematics(frames);
+  return analyzeGaitCycles(frames.map((frame) => frame.timestamp), kinematics.leftAnkleY, kinematics.rightAnkleY, kinematics, frames);
+}
+
+test("a persistent left/right swap by the pose model is detected and undone", () => {
+  const clean = runningFrames(150, 0.72);
+  const swapped = runningFrames(150, 0.72, { swapFrom: 40 });
+  const { frames, swapEpisodes } = correctLegSwaps(swapped);
+  assert.equal(swapEpisodes, 1);
+  assert.deepEqual(frames[100].landmarks[27], clean[100].landmarks[27]);
+  assert.deepEqual(frames[100].landmarks[28], clean[100].landmarks[28]);
+  assert.equal(correctLegSwaps(clean).swapEpisodes, 0);
+});
+
+test("both legs tracked on one leg does not multiply the cadence and withholds symmetry", () => {
+  const frames = runningFrames(240, 120 / 170, { mergeLegs: true });
+  const gait = gaitFor(frames);
+  assert.ok(gait.cadenceSpm.value === null || gait.cadenceSpm.value < 200, `cadence ${gait.cadenceSpm.value}`);
+  assert.ok((gait.mergedLegFramesPct ?? 0) > 50);
+  const symmetry = evaluateSymmetryAndConsistency(computeSequenceKinematics(frames), gait);
+  assert.equal(symmetry.symmetryScore.value, null);
+  assert.ok(mergedLegFramePct(runningFrames(60, 0.7), computeSequenceKinematics(runningFrames(60, 0.7)).torsoHeightPx)! < 30);
+});
+
+test("duplicate contacts seen in both ankle tracks are merged into one step", () => {
+  const times = Array.from({ length: 300 }, (_, index) => (index + 0.5) / 30);
+  const strideSec = 120 / 170;
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  const right = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI));
+  // Each ankle track also shows a faint copy of the other foot's landing 0.1 s later.
+  const echo = (own: number[], other: number[]) => own.map((value, index) => Math.max(value, (other[index - 3] ?? 0) - 2));
+  const gait = analyzeGaitCycles(times, echo(left, right), echo(right, left), emptyKinematics(times.length), []);
+  assert.ok(gait.cadenceSpm.value !== null && Math.abs(gait.cadenceSpm.value - 170) < 3, `cadence ${gait.cadenceSpm.value}`);
+});
+
+test("implausible step rates are reported as unavailable rather than as a number", () => {
+  const times = Array.from({ length: 300 }, (_, index) => (index + 0.5) / 30);
+  const strideSec = 0.42; // 0.21 s steps -> 286 steps/min
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  const right = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI));
+  const gait = analyzeGaitCycles(times, left, right, emptyKinematics(times.length), []);
+  assert.equal(gait.cadenceSpm.value, null);
+  assert.match(gait.cadenceSpm.explanation, /plausible/);
+  assert.equal(gait.strideTimeCvPct.value, null);
+});
+
+test("a constant timing offset on the far leg does not inflate stride variation or the symmetry score", () => {
+  const times = Array.from({ length: 300 }, (_, index) => (index + 0.5) / 30);
+  const strideSec = 120 / 175;
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  // Right contacts detected 60 ms late every time: steps alternate ~0.28 s / ~0.40 s.
+  const right = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * (time - 0.06)) / strideSec + Math.PI));
+  const gait = analyzeGaitCycles(times, left, right, emptyKinematics(times.length), []);
+  assert.ok(gait.cadenceSpm.value !== null && Math.abs(gait.cadenceSpm.value - 175) < 1.5, `cadence ${gait.cadenceSpm.value}`);
+  assert.ok(gait.strideTimeCvPct.value !== null && gait.strideTimeCvPct.value < 2, `cv ${gait.strideTimeCvPct.value}`);
+  assert.ok(gait.medianStrideSec !== null && Math.abs(gait.medianStrideSec - strideSec) < 0.01);
+  const symmetry = evaluateSymmetryAndConsistency(emptyKinematics(times.length), gait);
+  // The right foot really does land 60 ms late in this signal, so step-time asymmetry is reported and scored.
+  assert.ok((symmetry.stepTimeSymmetryIndexPct.value ?? 0) > 20, "step-time SI reflects the offset");
+  assert.ok(symmetry.symmetryScore.value !== null && symmetry.symmetryScore.value < 100);
+});
+
+test("stride timing ignores leg labels, so mislabelled contacts do not distort cadence or variation", () => {
+  const times = Array.from({ length: 300 }, (_, index) => (index + 0.5) / 30);
+  const strideSec = 120 / 175;
+  const left = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * time) / strideSec));
+  const right = times.map((time) => 500 + 40 * Math.cos((2 * Math.PI * (time - 0.06)) / strideSec + Math.PI));
+  // Swap the two ankle tracks for scattered stretches, as an imperfect swap correction would leave them.
+  const swapped = (index: number) => Math.floor(index / 23) % 3 === 1;
+  const labelledLeft = times.map((_, index) => (swapped(index) ? right[index] : left[index]));
+  const labelledRight = times.map((_, index) => (swapped(index) ? left[index] : right[index]));
+  const gait = analyzeGaitCycles(times, labelledLeft, labelledRight, emptyKinematics(times.length), []);
+  assert.ok(gait.cadenceSpm.value !== null && Math.abs(gait.cadenceSpm.value - 175) < 2, `cadence ${gait.cadenceSpm.value}`);
+  assert.ok(gait.strideTimeCvPct.value !== null && gait.strideTimeCvPct.value < 4, `cv ${gait.strideTimeCvPct.value}`);
+});
+
+test("contacts are assigned to physical legs by alternation, regardless of pose-model labels", () => {
+  const truth = Array.from({ length: 16 }, (_, index) => (index % 2 === 0 ? "left" : "right") as "left" | "right");
+  // Labels flipped for a stretch in the middle, as after an uncorrected swap.
+  const events = truth.map((side, index) => ({
+    stanceTime: index * 0.36,
+    leg: (index >= 6 && index < 9 ? (side === "left" ? "right" : "left") : side) as "left" | "right",
+  }));
+  assert.deepEqual(assignSides(events), truth);
+  // A missed contact (gap of two steps) starts a new run that is re-synchronised from the labels.
+  const withGap = events.filter((_, index) => index !== 10).map((event, index) => ({ ...event, leg: (index < 10 ? truth[index] : truth[index + 1]) as "left" | "right" }));
+  assert.deepEqual(assignSides(withGap), truth.filter((_, index) => index !== 10));
+  assert.deepEqual(assignSides([]), []);
 });

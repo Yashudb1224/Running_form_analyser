@@ -44,12 +44,12 @@ function compare(label: string, observed: MetricResult, reference: ReferenceRang
   };
 }
 
-function observedOnly(label: string, observed: MetricResult, note: string): MetricComparison {
+function observedOnly(label: string, observed: MetricResult, note: string, referenceText = "No published range"): MetricComparison {
   return {
     label,
     observed,
     reference: null,
-    referenceText: "No published range",
+    referenceText,
     position: observed.value === null ? "unavailable" : "observed-only",
     positionText: observed.value === null ? "Unavailable" : "Observed only",
     guidance: observed.value === null ? observed.explanation : note,
@@ -68,19 +68,19 @@ export function getMetricComparisons(report: CompleteAnalysisReport): MetricComp
       ? "Running direction could not be determined, so forward lean is unavailable."
       : "Mean shoulder-to-hip angle from vertical, positive when leaning in the running direction."
   );
-  const symmetryCandidates = [symmetry.kneeFlexionSymmetryIndexPct, symmetry.stepTimeSymmetryIndexPct]
-    .filter((candidate) => candidate.value !== null);
-  const worstSymmetry = symmetryCandidates.length
-    ? symmetryCandidates.reduce((worst, candidate) => ((candidate.value ?? 0) > (worst.value ?? 0) ? candidate : worst))
-    : symmetry.kneeFlexionSymmetryIndexPct;
 
   return [
     compare("Cadence", gait.cadenceSpm, REFERENCE_RANGES.cadence, formScore.subScores.cadence),
     compare("Shank angle at foot strike", gait.footStrikeShankAngleDeg, REFERENCE_RANGES.footStrikeShank, formScore.subScores.footStrike),
     compare("Knee flexion at midstance", gait.midstanceKneeFlexionDeg, REFERENCE_RANGES.midstanceKneeFlexion, formScore.subScores.kneeFlexion),
     compare("Forward trunk lean", leanMetric, REFERENCE_RANGES.trunkLean, formScore.subScores.posture),
-    compare("Left/right symmetry", worstSymmetry, REFERENCE_RANGES.symmetryIndex, formScore.subScores.symmetry),
-    compare("Step-time variation", gait.stepTimeCvPct, REFERENCE_RANGES.stepTimeVariation, formScore.subScores.consistency),
+    observedOnly(
+      "Left/right symmetry",
+      symmetry.symmetryIndexPct,
+      "Difference between your legs in step time and landing position. Shown for information only: from a single side-on video the far leg is tracked less reliably than the near leg, so it is not scored.",
+      `Typical: under ${REFERENCE_RANGES.symmetryIndex.maximum}% (not scored)`
+    ),
+    compare("Stride-time variation", gait.strideTimeCvPct, REFERENCE_RANGES.strideTimeVariation, formScore.subScores.consistency),
     observedOnly(
       "Foot landing ahead of hip",
       gait.ankleAheadOfHipTorsoPct,

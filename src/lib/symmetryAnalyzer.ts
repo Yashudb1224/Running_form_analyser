@@ -1,6 +1,9 @@
 import { GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
 import { REFERENCE_RANGES, scoreAgainstReference } from "./researchReferences";
 
+/** Above this share of overlapping-leg frames, left/right labels are not trustworthy. */
+export const MAX_MERGED_LEG_FRAMES_PCT = 50;
+
 function finiteValues(values: (number | null)[]): number[] {
   return values.filter((value): value is number => value !== null && Number.isFinite(value));
 }
@@ -41,6 +44,7 @@ export function evaluateSymmetryAndConsistency(
   // Compare like-for-like events per leg; the two legs are half a cycle apart at any instant.
   const kneeSi = symmetryIndex(gait.left.midstanceKneeFlexionDeg.value, gait.right.midstanceKneeFlexionDeg.value);
   const stepSi = symmetryIndex(gait.left.stepTimeSec.value, gait.right.stepTimeSec.value);
+  const landingSi = symmetryIndex(gait.left.landingOffsetTorsoPct.value, gait.right.landingOffsetTorsoPct.value);
   const leftShank = gait.left.footStrikeShankAngleDeg.value;
   const rightShank = gait.right.footStrikeShankAngleDeg.value;
   const shankDifference = leftShank !== null && rightShank !== null ? Math.abs(leftShank - rightShank) : null;
@@ -52,31 +56,47 @@ export function evaluateSymmetryAndConsistency(
     ? Math.max(0, 100 - (Math.abs(leftElbow - rightElbow) / elbowMeanMagnitude) * 100)
     : null;
 
-  const availableIndices = finiteValues([kneeSi, stepSi]);
-  const worstIndex = availableIndices.length ? Math.max(...availableIndices) : null;
-  const symmetryScore = worstIndex === null
-    ? unavailableScore("Stance events on both legs are needed to compare left and right.")
+  // Symmetry from a single side-on clip uses only what is measured equally well on both legs:
+  //  - step time, from contacts grouped by physical leg through foot alternation (immune to label swaps);
+  //  - landing position, measured at foot strike when the legs are furthest apart and both visible.
+  // Knee flexion is not scored: the far knee is hidden behind the swinging near leg at its midstance.
+  const legsMerged = (gait.mergedLegFramesPct ?? 0) > MAX_MERGED_LEG_FRAMES_PCT;
+  const components = finiteValues([stepSi, landingSi]);
+  const combinedSi = !legsMerged && components.length
+    ? components.reduce((sum, value) => sum + value, 0) / components.length
+    : null;
+  const symmetryScore = legsMerged
+    ? unavailableScore(`The pose model placed both legs on top of each other in ${gait.mergedLegFramesPct?.toFixed(0)}% of frames, so left and right cannot be compared.`)
+    : combinedSi === null
+    ? unavailableScore("Foot contacts on both legs are needed to compare left and right.")
     : metric(
-      scoreAgainstReference(REFERENCE_RANGES.symmetryIndex, worstIndex),
+      scoreAgainstReference(REFERENCE_RANGES.symmetryIndex, combinedSi),
       "heuristic-estimate",
       "/ 100",
-      `Scored from the larger of the knee-flexion and step-time symmetry indices (${worstIndex.toFixed(1)}%) against the 10% research threshold.`
+      `Scored from the mean of the step-time and landing-position symmetry indices (${combinedSi.toFixed(1)}%) against the 10% research threshold.`
     );
-  const cv = gait.stepTimeCvPct.value;
+  const cv = gait.strideTimeCvPct.value;
 
   return {
     symmetryScore,
     consistencyScore: cv === null
-      ? unavailableScore("Step consistency requires enough detected gait events.")
+      ? unavailableScore("Stride consistency requires enough detected same-leg strides.")
       : metric(
-        scoreAgainstReference(REFERENCE_RANGES.stepTimeVariation, cv),
+        scoreAgainstReference(REFERENCE_RANGES.strideTimeVariation, cv),
         "heuristic-estimate",
         "/ 100",
-        "Scored from step-time variation against the app's 5% rule."
+        "Scored from stride-time variation against the app's 5% rule."
       ),
-    kneeFlexionSymmetryIndexPct: metric(round1(kneeSi), "algorithmically-estimated", "%", "Symmetry index of mean left and right midstance knee flexion."),
-    stepTimeSymmetryIndexPct: metric(round1(stepSi), "algorithmically-estimated", "%", "Symmetry index of mean step time ending on each foot."),
-    shankAngleDifferenceDeg: metric(round1(shankDifference), "algorithmically-estimated", "deg", "Absolute difference between left and right mean foot-strike shank angles."),
+    symmetryIndexPct: metric(
+      round1(combinedSi),
+      "algorithmically-estimated",
+      "%",
+      legsMerged ? symmetryScore.explanation : "Mean of the step-time and landing-position symmetry indices."
+    ),
+    kneeFlexionSymmetryIndexPct: metric(legsMerged ? null : round1(kneeSi), "algorithmically-estimated", "%", legsMerged ? symmetryScore.explanation : "Symmetry index of mean left and right midstance knee flexion; the far knee is often hidden behind the near leg at midstance."),
+    stepTimeSymmetryIndexPct: metric(legsMerged ? null : round1(stepSi), "algorithmically-estimated", "%", legsMerged ? symmetryScore.explanation : "Symmetry index of mean step time ending on each foot."),
+    landingOffsetSymmetryIndexPct: metric(legsMerged ? null : round1(landingSi), "algorithmically-estimated", "%", legsMerged ? symmetryScore.explanation : "Symmetry index of how far ahead of the hips each foot lands."),
+    shankAngleDifferenceDeg: metric(legsMerged ? null : round1(shankDifference), "algorithmically-estimated", "deg", "Absolute difference between left and right mean foot-strike shank angles."),
     kneeAngleMaxLeftDeg: metric(leftKnee.max, "landmark-derived", "deg", "Maximum internal 2D angle at the left knee; nearer 180° indicates a straighter configuration."),
     kneeAngleMaxRightDeg: metric(rightKnee.max, "landmark-derived", "deg", "Maximum internal 2D angle at the right knee; nearer 180° indicates a straighter configuration."),
     kneeAngleMinLeftDeg: metric(leftKnee.min, "landmark-derived", "deg", "Minimum internal 2D angle at the left knee (greatest bend, usually in swing)."),
