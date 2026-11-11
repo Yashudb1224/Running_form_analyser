@@ -18,7 +18,12 @@ import { buildAnalysisQuality } from "@/lib/analysisQuality";
 import { captureEvidenceFrames } from "@/lib/evidenceFrames";
 import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
-import { FileText, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
+import { FileText, RefreshCw, Loader2, AlertTriangle, CheckCircle2, CloudOff } from "lucide-react";
+import { useAuth } from "@/components/AuthProvider";
+import { SignInPanel } from "@/components/SignInPanel";
+import { AnalysisHistory } from "@/components/AnalysisHistory";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import { saveAnalysis, toAnalysisRecord } from "@/lib/analysisRecord";
 
 // A running step lasts ~0.3 s, so 30 samples/s are needed to time steps and catch foot strike.
 const SAMPLE_RATE_FPS = 30;
@@ -102,6 +107,12 @@ export default function Home() {
   const [report, setReport] = useState<CompleteAnalysisReport | null>(null);
   const [activeTab, setActiveTab] = useState<"summary" | "video" | "charts" | "symmetry" | "guide">("summary");
   const [seekRequest, setSeekRequest] = useState<SeekRequest | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const auth = useAuth();
+  const userIdRef = useRef<string | null>(null);
+  userIdRef.current = auth.user?.id ?? null;
   const activeJobRef = useRef(0);
   const estimatorRef = useRef<BrowserPoseEstimator | null>(null);
   const videoUrlRef = useRef<string | null>(null);
@@ -122,7 +133,7 @@ export default function Home() {
     if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
   }, []);
 
-  const analyzeVideo = async (url: string) => {
+  const analyzeVideo = async (url: string, videoName: string) => {
     const jobId = ++activeJobRef.current;
     setIsAnalyzing(true);
     setAnalysisProgress(1);
@@ -227,6 +238,7 @@ export default function Home() {
       setReport(compiledReport);
       setAnalysisProgress(100);
       setProgressMessage("Analysis complete.");
+      void saveToHistory(compiledReport, videoName);
     } catch (error) {
       if (jobId === activeJobRef.current) setErrorMessage(getErrorMessage(error));
     } finally {
@@ -245,6 +257,22 @@ export default function Home() {
     }
   };
 
+  /** Saves the finished analysis for the signed-in user; the video itself is never uploaded. */
+  const saveToHistory = async (analysis: CompleteAnalysisReport, videoName: string) => {
+    const supabase = getSupabase();
+    if (!supabase || !userIdRef.current) return;
+    setSaveStatus("saving");
+    setSaveError(null);
+    try {
+      await saveAnalysis(supabase, toAnalysisRecord(analysis, videoName));
+      setSaveStatus("saved");
+      setHistoryVersion((version) => version + 1);
+    } catch (error) {
+      setSaveStatus("error");
+      setSaveError(getErrorMessage(error));
+    }
+  };
+
   const handleVideoSelected = (file: File) => {
     const validationError = validateVideoFile(file);
     if (validationError) {
@@ -256,7 +284,7 @@ export default function Home() {
     const url = URL.createObjectURL(file);
     videoUrlRef.current = url;
     setVideoUrl(url);
-    void analyzeVideo(url);
+    void analyzeVideo(url, file.name);
   };
 
   const openInVideo = (time: number) => {
@@ -287,6 +315,8 @@ export default function Home() {
     setAnalysisProgress(0);
     setProgressMessage("");
     setSeekRequest(null);
+    setSaveStatus("idle");
+    setSaveError(null);
     setActiveTab("summary");
   };
 
@@ -300,12 +330,23 @@ export default function Home() {
     <div className="app-shell pb-12">
       <Header />
       <main className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
-        {!videoFile && !isAnalyzing && (
-          <VideoUploader
-            onVideoSelected={handleVideoSelected}
-            samplingRateFps={SAMPLE_RATE_FPS}
-            maxAnalyzedSeconds={MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS}
-          />
+        {!videoFile && !isAnalyzing && auth.enabled && auth.loading && (
+          <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-primary" aria-label="Checking sign-in" /></div>
+        )}
+
+        {!videoFile && !isAnalyzing && auth.enabled && !auth.loading && !auth.user && (
+          <SignInPanel onSignIn={() => void auth.signInWithGoogle()} error={auth.error} />
+        )}
+
+        {!videoFile && !isAnalyzing && (!auth.enabled || auth.user) && (
+          <>
+            <VideoUploader
+              onVideoSelected={handleVideoSelected}
+              samplingRateFps={SAMPLE_RATE_FPS}
+              maxAnalyzedSeconds={MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS}
+            />
+            {auth.user && isSupabaseConfigured() && <AnalysisHistory refreshKey={historyVersion} />}
+          </>
         )}
 
         {errorMessage && (
@@ -349,6 +390,15 @@ export default function Home() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {saveStatus === "saving" && (
+                  <span className="status-pill bg-subtle text-body"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Saving to history</span>
+                )}
+                {saveStatus === "saved" && (
+                  <span className="status-pill bg-success/10 text-success"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />Saved to history</span>
+                )}
+                {saveStatus === "error" && (
+                  <span className="status-pill bg-danger/10 text-danger" title={saveError ?? undefined}><CloudOff className="h-3.5 w-3.5" aria-hidden="true" />Not saved</span>
+                )}
                 <button onClick={downloadReportPdf} className="primary-button min-h-9">
                   <FileText className="h-4 w-4" /> Export PDF
                 </button>

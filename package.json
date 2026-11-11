@@ -10,8 +10,10 @@
     "test": "node tests/run-tests.cjs"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.39.8",
     "@mediapipe/camera_utils": "0.3.1675466862",
     "@mediapipe/pose": "0.5.1675469404",
+    "@supabase/supabase-js": "^2.119.0",
     "canvas-confetti": "^1.9.3",
     "clsx": "^2.1.1",
     "jspdf": "^4.2.1",

@@ -16,6 +16,7 @@ import { evaluateSymmetryAndConsistency, symmetryIndex } from "../src/lib/symmet
 import { buildAnalysisQuality } from "../src/lib/analysisQuality";
 import { selectEvidenceMoments } from "../src/lib/evidenceFrames";
 import { correctLegSwaps, mergedLegFramePct } from "../src/lib/legTracking";
+import { toAnalysisRecord } from "../src/lib/analysisRecord";
 import { REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
 import { convertMediaPipeLandmarks, createUnavailableFrame, hasSufficientTrackingCoverage } from "../src/lib/poseEstimator";
 import { CompleteAnalysisReport, FramePose, GaitMetrics, KinematicSequence, Landmark, metric } from "../src/types/telemetry";
@@ -482,4 +483,20 @@ test("contacts are assigned to physical legs by alternation, regardless of pose-
   const withGap = events.filter((_, index) => index !== 10).map((event, index) => ({ ...event, leg: (index < 10 ? truth[index] : truth[index + 1]) as "left" | "right" }));
   assert.deepEqual(assignSides(withGap), truth.filter((_, index) => index !== 10));
   assert.deepEqual(assignSides([]), []);
+});
+
+test("saved history records hold the metrics but never the video or evidence images", () => {
+  const frames = runningFrames(150, 120 / 170);
+  const kinematics = computeSequenceKinematics(frames);
+  const gait = analyzeGaitCycles(frames.map((frame) => frame.timestamp), kinematics.leftAnkleY, kinematics.rightAnkleY, kinematics, frames);
+  const report = reportFrom(kinematics, gait, frames, true);
+  const record = toAnalysisRecord(report, "run.mp4");
+  assert.equal(record.video_name, "run.mp4");
+  assert.equal(record.cadence_spm, gait.cadenceSpm.value);
+  assert.equal(record.overall_score, report.formScore.overallScore.value);
+  assert.equal(record.knee_flexion_deg, gait.midstanceKneeFlexionDeg.value);
+  assert.ok(record.details.subScores && "cadence" in record.details.subScores);
+  const serialized = JSON.stringify(record);
+  assert.ok(!serialized.includes("data:image"), "no evidence images are stored");
+  assert.ok(!("frames" in record), "no landmark frames are stored");
 });

@@ -33,6 +33,7 @@ try {
     "src/lib/evidenceFrames.ts",
     "src/lib/overlayDrawing.ts",
     "src/lib/legTracking.ts",
+    "src/lib/analysisRecord.ts",
     "src/lib/pdfReport.ts",
     "src/lib/poseEstimator.ts",
   ], { cwd: root, stdio: "inherit" });

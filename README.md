@@ -36,3 +36,18 @@ Ground-contact and flight duration are not calculated. Distances are relative to
 There is no official optimal cadence, lean or joint angle. Each scored measure is compared with a research-typical range or clinical video-analysis guidance, defined with its citations in `src/lib/researchReferences.ts` (cadence 160-185 steps/min, forward trunk lean 3-12 deg, midstance knee flexion 35-50 deg, shank angle at foot strike 0-8 deg, symmetry index under 10%, stride-time variation under 5%). Each component scores 100 inside its band and loses points outside it; the overall score is a weighted mean of the available components. It is a screening summary, not a validated assessment or a medical or injury-risk tool.
 
 The Metric guide tab lists every range with its basis and full references. The PDF export contains recording quality, research comparisons, per-leg measurements, kinematic traces and references.
+
+## Sign-in (Clerk) and saved history (Supabase)
+
+Signing in with Google (through Clerk) lets the app save each analysis (date, video name, score and metrics, never the video) to a Supabase database so progress can be tracked over time. Without configuration the app runs as before, with no sign-in or history.
+
+**Clerk (sign-in)**
+1. Create an application at [dashboard.clerk.com](https://dashboard.clerk.com) and enable **Google** as the sign-in option (Clerk provides shared Google credentials in development).
+2. Copy the publishable and secret keys from **API keys** into `.env.local` (see `.env.example`).
+
+**Supabase (database)**
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In Clerk, open **Integrations > Supabase** (or the "Connect with Supabase" setup) and activate it; it adds the `role: authenticated` claim Supabase needs and shows your Clerk domain.
+3. In Supabase, open **Authentication > Sign In / Providers > Third-party auth**, add **Clerk**, and paste the Clerk domain.
+4. In **SQL Editor**, run `supabase/schema.sql`. It creates the `analyses` table with row-level security keyed on the Clerk user ID, so each user can only read and delete their own rows.
+5. Copy the project URL and anon key from **Project Settings > API** into `.env.local`, then restart `npm run dev`.

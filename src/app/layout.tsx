@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { ThemeProvider, themeInitScript } from "@/components/ThemeProvider";
+import { AuthProvider } from "@/components/AuthProvider";
+import { isClerkConfigured } from "@/lib/authConfig";
 
 export const metadata: Metadata = {
   title: "Stride Lab | Running Motion Analysis",
@@ -12,14 +15,18 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
+  const page = (
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="antialiased min-h-screen bg-background text-body">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
+  // Without Clerk keys the app runs without sign-in.
+  return isClerkConfigured() ? <ClerkProvider>{page}</ClerkProvider> : page;
 }
