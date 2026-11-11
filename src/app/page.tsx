@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { VideoUploader } from "@/components/VideoUploader";
 import { SeekRequest, TelemetryPlayer } from "@/components/TelemetryPlayer";
 import { EvidenceGallery } from "@/components/EvidenceGallery";
+import { AICoach } from "@/components/AICoach";
 import { ExecutiveSummary } from "@/components/ExecutiveSummary";
 import { MetricGuide } from "@/components/MetricGuide";
 import { KinematicCharts } from "@/components/KinematicCharts";
@@ -110,6 +111,7 @@ export default function Home() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
   const auth = useAuth();
   const userIdRef = useRef<string | null>(null);
   userIdRef.current = auth.user?.id ?? null;
@@ -264,7 +266,8 @@ export default function Home() {
     setSaveStatus("saving");
     setSaveError(null);
     try {
-      await saveAnalysis(supabase, toAnalysisRecord(analysis, videoName));
+      const saved = await saveAnalysis(supabase, toAnalysisRecord(analysis, videoName));
+      setSavedAnalysisId(saved.id);
       setSaveStatus("saved");
       setHistoryVersion((version) => version + 1);
     } catch (error) {
@@ -317,6 +320,7 @@ export default function Home() {
     setSeekRequest(null);
     setSaveStatus("idle");
     setSaveError(null);
+    setSavedAnalysisId(null);
     setActiveTab("summary");
   };
 
@@ -451,6 +455,7 @@ export default function Home() {
             {activeTab === "summary" && (
               <div role="tabpanel" id="summary-report-panel" aria-labelledby="summary-report-tab" className="space-y-8 pt-2">
                 <ExecutiveSummary report={report} />
+                <AICoach report={report} videoName={videoFile?.name ?? "Running video"} analysisId={savedAnalysisId} />
                 <EvidenceGallery report={report} onOpenInVideo={openInVideo} />
               </div>
             )}

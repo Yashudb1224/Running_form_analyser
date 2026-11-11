@@ -51,3 +51,12 @@ Signing in with Google (through Clerk) lets the app save each analysis (date, vi
 3. In Supabase, open **Authentication > Sign In / Providers > Third-party auth**, add **Clerk**, and paste the Clerk domain.
 4. In **SQL Editor**, run `supabase/schema.sql`. It creates the `analyses` table with row-level security keyed on the Clerk user ID, so each user can only read and delete their own rows.
 5. Copy the project URL and anon key from **Project Settings > API** into `.env.local`, then restart `npm run dev`.
+
+## AI coach (Google Gemini)
+
+The Summary tab has an optional **AI Coach**. When the user clicks "Get AI coaching", the browser sends the measured metrics and the annotated evidence frames (never the video) to the app's `/api/coach` route, which asks Google Gemini for plain-language priorities, running cues and drills. Gemini is instructed to treat the measurements as correct, so its advice stays consistent with the scores.
+
+1. Create a free API key at [aistudio.google.com](https://aistudio.google.com) (**Get API key**).
+2. Add `GEMINI_API_KEY=...` to `.env.local` (server-only; never use a `NEXT_PUBLIC_` name for it) and restart `npm run dev`.
+
+When Clerk is configured, only signed-in users can use the coach, and each user is limited to one request every 15 seconds to protect the free quota.
