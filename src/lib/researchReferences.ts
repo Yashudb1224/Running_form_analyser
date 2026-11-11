@@ -26,8 +26,10 @@ export interface ReferenceRange {
   /** Display scale for range bars. */
   scaleMinimum: number;
   scaleMaximum: number;
-  /** Score points lost per unit outside the band; scores floor at MIN_COMPONENT_SCORE. */
+  /** Score points lost per unit outside the band, starting from EDGE_SCORE; scores floor at 0. */
   penaltyPerUnit: number;
+  /** For "lower is better" measures (variation, asymmetry) only the upper limit matters. */
+  lowerIsBetter?: boolean;
   basis: ReferenceBasis;
   summary: string;
   /** How the numeric limits relate to the cited sources. */
@@ -45,7 +47,11 @@ export type ReferenceId =
   | "symmetryIndex"
   | "strideTimeVariation";
 
-export const MIN_COMPONENT_SCORE = 40;
+export const MIN_COMPONENT_SCORE = 0;
+/** Score at the edge of the reference range; 100 is kept for values comfortably inside it. */
+export const EDGE_SCORE = 90;
+/** Share of the range (around its centre, or from zero for lower-is-better) that scores a full 100. */
+const IDEAL_SHARE = 0.6;
 
 export const CITATIONS = {
   heiderscheit2011: {
@@ -95,7 +101,7 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 185,
     scaleMinimum: 130,
     scaleMaximum: 210,
-    penaltyPerUnit: 2,
+    penaltyPerUnit: 3,
     basis: "research-typical",
     summary: "Cadence rises with running speed and varies with leg length, so there is no universal optimum. 180 steps/min is an observation of elite runners at race pace, not a rule.",
     bandNote: "160-185 steps/min spans cadences commonly reported for trained runners at moderate to fast paces. The research evidence is relative: raising your own cadence 5-10% reduces loading at the hip and knee.",
@@ -111,7 +117,7 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 12,
     scaleMinimum: -10,
     scaleMaximum: 25,
-    penaltyPerUnit: 4,
+    penaltyPerUnit: 6,
     basis: "research-typical",
     summary: "Runners normally lean slightly forward from the hips. More lean shifts load from the knee towards the hip; leaning backwards is uncommon.",
     bandNote: "3-12 deg brackets the self-selected forward trunk angles reported in running studies. Increasing lean reduces patellofemoral (knee) stress but increases hip extensor demand.",
@@ -127,7 +133,7 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 50,
     scaleMinimum: 15,
     scaleMaximum: 70,
-    penaltyPerUnit: 3,
+    penaltyPerUnit: 4,
     basis: "research-typical",
     summary: "The stance knee bends to absorb landing forces. Laboratory gait studies report peak stance knee flexion of roughly 40-45 deg in running.",
     bandNote: "35-50 deg brackets the typical laboratory values, allowing for the extra error of 2D video estimates.",
@@ -143,7 +149,7 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 8,
     scaleMinimum: -10,
     scaleMaximum: 25,
-    penaltyPerUnit: 5,
+    penaltyPerUnit: 6,
     basis: "clinical-guidance",
     summary: "Clinical video analysis looks for a near-vertical shin when the foot lands. A shin angled well forward means the foot lands ahead of the knee (overstriding), which increases braking forces.",
     bandNote: "The sources describe a near-vertical shank qualitatively. The 0-8 deg band is this app's numeric reading of that guidance, not a published cutoff.",
@@ -159,7 +165,8 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 10,
     scaleMinimum: 0,
     scaleMaximum: 30,
-    penaltyPerUnit: 3,
+    penaltyPerUnit: 4,
+    lowerIsBetter: true,
     basis: "research-typical",
     summary: "The symmetry index is the left/right difference divided by the mean of the two sides, here averaged over step time and landing position. Healthy runners are rarely perfectly symmetric.",
     bandNote: "A symmetry index below 10% is a threshold widely used in gait research to describe practically symmetric movement. It is not a clinical injury cutoff.",
@@ -175,7 +182,8 @@ export const REFERENCE_RANGES: Record<ReferenceId, ReferenceRange> = {
     maximum: 5,
     scaleMinimum: 0,
     scaleMaximum: 20,
-    penaltyPerUnit: 4,
+    penaltyPerUnit: 8,
+    lowerIsBetter: true,
     basis: "app-rule",
     summary: "Steady-state running is highly regular. Higher variation can come from changes of pace, uneven terrain, fatigue, or tracking noise.",
     bandNote: "There is no published consensus threshold. The 5% band is an app rule that allows for video timing resolution (one frame is about 33 ms at 30 frames/s).",
@@ -193,13 +201,31 @@ export function getReferencePosition(reference: ReferenceRange, value: number): 
   return "within";
 }
 
+/**
+ * Scores a measured value against its reference range:
+ *  - 100 in the ideal part of the range (the middle 60%, or the lowest 60% for lower-is-better);
+ *  - tapering to 90 at the edge of the range;
+ *  - then losing `penaltyPerUnit` points per unit outside the range, down to 0.
+ */
 export function scoreAgainstReference(reference: ReferenceRange, value: number): number {
-  const distance = value < reference.minimum
-    ? reference.minimum - value
-    : value > reference.maximum
-      ? value - reference.maximum
-      : 0;
-  return Math.round(Math.max(MIN_COMPONENT_SCORE, 100 - distance * reference.penaltyPerUnit));
+  const { minimum, maximum, penaltyPerUnit } = reference;
+  let score: number;
+  if (value > maximum || (!reference.lowerIsBetter && value < minimum)) {
+    const outside = value > maximum ? value - maximum : minimum - value;
+    score = EDGE_SCORE - outside * penaltyPerUnit;
+  } else if (reference.lowerIsBetter) {
+    const idealLimit = maximum * IDEAL_SHARE;
+    score = value <= idealLimit ? 100 : 100 - (100 - EDGE_SCORE) * ((value - idealLimit) / (maximum - idealLimit));
+  } else {
+    const centre = (minimum + maximum) / 2;
+    const halfWidth = (maximum - minimum) / 2;
+    const idealHalfWidth = halfWidth * IDEAL_SHARE;
+    const fromCentre = Math.abs(value - centre);
+    score = fromCentre <= idealHalfWidth
+      ? 100
+      : 100 - (100 - EDGE_SCORE) * ((fromCentre - idealHalfWidth) / (halfWidth - idealHalfWidth));
+  }
+  return Math.round(Math.max(MIN_COMPONENT_SCORE, Math.min(100, score)));
 }
 
 export function getReferenceGuidance(reference: ReferenceRange, value: number): string {

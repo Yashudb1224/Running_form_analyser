@@ -17,7 +17,7 @@ import { buildAnalysisQuality } from "../src/lib/analysisQuality";
 import { selectEvidenceMoments } from "../src/lib/evidenceFrames";
 import { correctLegSwaps, mergedLegFramePct } from "../src/lib/legTracking";
 import { toAnalysisRecord } from "../src/lib/analysisRecord";
-import { REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
+import { EDGE_SCORE, REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
 import { convertMediaPipeLandmarks, createUnavailableFrame, hasSufficientTrackingCoverage } from "../src/lib/poseEstimator";
 import { CompleteAnalysisReport, FramePose, GaitMetrics, KinematicSequence, Landmark, metric } from "../src/types/telemetry";
 
@@ -260,10 +260,15 @@ test("symmetry index compares per-leg events and flags differences over 10%", ()
 
 test("reference scoring is 100 inside the band and decreases outside it", () => {
   const cadence = REFERENCE_RANGES.cadence;
-  assert.equal(scoreAgainstReference(cadence, 170), 100);
-  assert.equal(scoreAgainstReference(cadence, cadence.minimum), 100);
-  assert.equal(scoreAgainstReference(cadence, cadence.minimum - 5), 100 - 5 * cadence.penaltyPerUnit);
+  assert.equal(scoreAgainstReference(cadence, 170), 100, "comfortably inside the range");
+  assert.equal(scoreAgainstReference(cadence, cadence.minimum), EDGE_SCORE, "edge of the range");
+  assert.equal(scoreAgainstReference(cadence, cadence.minimum - 5), EDGE_SCORE - 5 * cadence.penaltyPerUnit);
   assert.equal(scoreAgainstReference(cadence, 20), MIN_COMPONENT_SCORE);
+  assert.equal(MIN_COMPONENT_SCORE, 0);
+  // Lower-is-better measures get a full score near zero, not only at the centre of the range.
+  assert.equal(scoreAgainstReference(REFERENCE_RANGES.strideTimeVariation, 0), 100);
+  assert.equal(scoreAgainstReference(REFERENCE_RANGES.strideTimeVariation, 5), EDGE_SCORE);
+  assert.equal(scoreAgainstReference(REFERENCE_RANGES.strideTimeVariation, 9), EDGE_SCORE - 4 * REFERENCE_RANGES.strideTimeVariation.penaltyPerUnit);
   assert.equal(getReferencePosition(cadence, 150), "below");
   assert.equal(getReferencePosition(cadence, 200), "above");
   for (const reference of Object.values(REFERENCE_RANGES)) {
@@ -295,7 +300,7 @@ test("the composite is withheld below the quality gate and computed above it", (
   assert.equal(calculateFormScore(kinematics, gait, symmetry, false).overallScore.value, null);
   const score = calculateFormScore(kinematics, gait, symmetry, true);
   assert.equal(score.subScores.posture.value, 100);
-  assert.equal(score.subScores.footStrike.value, 100 - 6 * REFERENCE_RANGES.footStrikeShank.penaltyPerUnit);
+  assert.equal(score.subScores.footStrike.value, EDGE_SCORE - 6 * REFERENCE_RANGES.footStrikeShank.penaltyPerUnit);
   assert.ok(score.overallScore.value !== null && score.overallScore.value < 100);
   assert.ok(score.observations.some((note) => note.startsWith("Shank angle at foot strike")));
 });
@@ -499,4 +504,60 @@ test("saved history records hold the metrics but never the video or evidence ima
   const serialized = JSON.stringify(record);
   assert.ok(!serialized.includes("data:image"), "no evidence images are stored");
   assert.ok(!("frames" in record), "no landmark frames are stored");
+});
+
+test("stricter scoring spreads clearly different runners apart", () => {
+  const overall = (m: { cadence: number; shin: number; knee: number; lean: number; stride: number }) => Math.round(
+    0.25 * scoreAgainstReference(REFERENCE_RANGES.cadence, m.cadence) +
+    0.25 * scoreAgainstReference(REFERENCE_RANGES.footStrikeShank, m.shin) +
+    0.2 * scoreAgainstReference(REFERENCE_RANGES.midstanceKneeFlexion, m.knee) +
+    0.2 * scoreAgainstReference(REFERENCE_RANGES.trunkLean, m.lean) +
+    0.1 * scoreAgainstReference(REFERENCE_RANGES.strideTimeVariation, m.stride)
+  );
+  const good = overall({ cadence: 175, shin: 4, knee: 42, lean: 7, stride: 2 });
+  const overstriding = overall({ cadence: 150, shin: 14, knee: 30, lean: 2, stride: 4 });
+  assert.equal(good, 100);
+  assert.ok(overstriding < 75, `overstriding runner scored ${overstriding}`);
+  assert.ok(good - overstriding > 25);
+});
+
+test("far-foot landings that sit higher in the image (perspective) are still detected", () => {
+  const times = Array.from({ length: 300 }, (_, index) => (index + 0.5) / 30);
+  const strideSec = 120 / 176;
+  // Near foot reaches y = 660 on the ground; the far foot only y = 635 and with a smaller swing.
+  const near = times.map((time) => 590 + 70 * Math.cos((2 * Math.PI * time) / strideSec));
+  const far = times.map((time) => 585 + 50 * Math.cos((2 * Math.PI * time) / strideSec + Math.PI));
+  // One stray value must not raise the detection threshold.
+  near[150] = 760;
+  const gait = analyzeGaitCycles(times, near, far, emptyKinematics(times.length), []);
+  assert.ok(gait.cadenceSpm.value !== null && Math.abs(gait.cadenceSpm.value - 176) < 3, `cadence ${gait.cadenceSpm.value}`);
+  assert.ok(gait.events.length >= 26, `only ${gait.events.length} contacts detected`);
+});
+
+test("foot strike is the frame where the foot is furthest ahead of the hips", () => {
+  const strideSec = 0.7;
+  const frames = Array.from({ length: 150 }, (_, index) => {
+    const time = (index + 0.5) / 30;
+    const phase = (2 * Math.PI * time) / strideSec;
+    const frame = sideViewFrame(index, time, {
+      leftAnkleY: 500 + 40 * Math.cos(phase),
+      rightAnkleY: 500 + 40 * Math.cos(phase + Math.PI),
+    });
+    // The foot reaches furthest forward a little before the ankle's lowest point, as in real running.
+    for (const [ankle, heel, offset] of [[27, 29, 0], [28, 30, Math.PI]] as const) {
+      const x = 300 + 80 * Math.cos(phase + offset + 0.6);
+      frame.landmarks[ankle] = landmark(x, frame.landmarks[ankle]!.y);
+      frame.landmarks[heel] = landmark(x - 10, frame.landmarks[ankle]!.y + 8);
+    }
+    return frame;
+  });
+  const kinematics = computeSequenceKinematics(frames);
+  const gait = analyzeGaitCycles(frames.map((frame) => frame.timestamp), kinematics.leftAnkleY, kinematics.rightAnkleY, kinematics, frames);
+  assert.ok(gait.events.length >= 6);
+  for (const event of gait.events) {
+    const heelIndex = event.leg === "left" ? 29 : 30;
+    const forward = (index: number) => frames[index].landmarks[heelIndex]!.x;
+    assert.ok(event.strikeFrame < event.stanceFrame, "strike comes before the lowest-ankle stance peak");
+    assert.ok(forward(event.strikeFrame) >= forward(Math.min(frames.length - 1, event.strikeFrame + 1)) - 1e-9);
+  }
 });

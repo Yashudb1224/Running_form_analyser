@@ -13,16 +13,23 @@
   --ink: 19 33 58;
   --body: 55 67 84;
   --muted: 95 107 122;
-  --primary: 30 58 95;
-  --primary-hover: 22 45 74;
+  --primary: 67 56 202;
+  --primary-hover: 55 48 163;
   --on-primary: 255 255 255;
-  --secondary: 79 107 138;
+  --secondary: 99 102 241;
+  /* Brand gradient (indigo to teal) for accents, headlines and the score ring. */
+  --brand-from: 79 70 229;
+  --brand-to: 13 148 136;
+  --glow-a: 99 102 241;
+  --glow-b: 20 184 166;
+  --glass: 255 255 255;
+  --glass-alpha: 0.78;
   --success: 47 115 86;
   --warning: 168 108 18;
   --danger: 169 68 59;
   --leg-left: 47 93 138;
   --leg-right: 185 115 63;
-  --shadow: 19 33 58;
+  --shadow: 30 27 75;
 }
 
 :root[data-theme="dark"] {
@@ -36,10 +43,16 @@
   --ink: 232 237 244;
   --body: 196 204 216;
   --muted: 139 150 166;
-  --primary: 128 168 216;
-  --primary-hover: 153 187 228;
-  --on-primary: 12 20 33;
-  --secondary: 140 165 194;
+  --primary: 165 180 252;
+  --primary-hover: 199 210 254;
+  --on-primary: 15 13 45;
+  --secondary: 129 140 248;
+  --brand-from: 129 140 248;
+  --brand-to: 45 212 191;
+  --glow-a: 79 70 229;
+  --glow-b: 13 148 136;
+  --glass: 21 28 40;
+  --glass-alpha: 0.72;
   --success: 98 180 141;
   --warning: 220 165 80;
   --danger: 226 122 112;
@@ -51,7 +64,13 @@
 body {
   min-width: 320px;
   overflow-x: hidden;
-  background: rgb(var(--background));
+  /* Soft mesh of brand colour behind translucent cards. */
+  background:
+    radial-gradient(48rem 32rem at 8% -8%, rgb(var(--glow-a) / 0.16), transparent 70%),
+    radial-gradient(40rem 28rem at 100% 0%, rgb(var(--glow-b) / 0.14), transparent 70%),
+    radial-gradient(44rem 30rem at 50% 110%, rgb(var(--glow-a) / 0.08), transparent 70%),
+    rgb(var(--background));
+  background-attachment: fixed;
   color: rgb(var(--body));
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
@@ -97,11 +116,49 @@ input:focus-visible,
 
 @layer components {
   .app-shell {
-    @apply min-h-screen bg-background text-body;
+    @apply min-h-screen text-body;
   }
 
+  /* Glass card: translucent surface over the brand mesh. */
   .panel {
-    @apply rounded-xl border border-border bg-surface shadow-card;
+    @apply rounded-2xl border border-border/70 shadow-card;
+    background: rgb(var(--glass) / var(--glass-alpha));
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+
+  .panel-interactive {
+    @apply transition duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-raised;
+  }
+
+  .bg-brand-gradient {
+    background-image: linear-gradient(135deg, rgb(var(--brand-from)), rgb(var(--brand-to)));
+  }
+
+  /* Fixed, darker stops so white text keeps its contrast in both themes. */
+  .bg-button-gradient {
+    background-image: linear-gradient(135deg, rgb(79 70 229), rgb(15 118 110));
+  }
+
+  .bg-brand-soft {
+    background-image: linear-gradient(135deg, rgb(var(--brand-from) / 0.12), rgb(var(--brand-to) / 0.10));
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(120deg, rgb(var(--brand-from)), rgb(var(--brand-to)));
+  }
+
+  .gradient-border {
+    @apply rounded-2xl p-[2px];
+    background-image: linear-gradient(135deg, rgb(var(--brand-from) / 0.7), rgb(var(--brand-to) / 0.7));
+  }
+
+  .skeleton {
+    @apply rounded-lg bg-subtle;
+    background-image: linear-gradient(90deg, transparent, rgb(var(--glass) / 0.6), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
   }
 
   .eyebrow {
@@ -121,15 +178,17 @@ input:focus-visible,
   }
 
   .control-button {
-    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-body transition-colors hover:border-border-strong hover:bg-subtle;
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-border bg-surface/80 px-3 text-xs font-medium text-body transition duration-150 hover:border-primary/40 hover:bg-subtle active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
   }
 
   .primary-button {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary-hover;
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition duration-150 hover:-translate-y-px hover:brightness-110 active:translate-y-0 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
+    background-image: linear-gradient(135deg, rgb(79 70 229), rgb(15 118 110));
+    box-shadow: 0 8px 20px -6px rgb(79 70 229 / 0.55);
   }
 
   .quiet-button {
-    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium text-body transition-colors hover:bg-subtle;
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-xl px-3 text-xs font-medium text-body transition duration-150 hover:bg-subtle active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50;
   }
 
   .status-pill {
@@ -137,8 +196,25 @@ input:focus-visible,
   }
 
   .chart-panel {
-    @apply rounded-xl border border-border bg-surface p-4 shadow-card sm:p-5;
+    @apply rounded-2xl border border-border/70 p-4 shadow-card sm:p-5;
+    background: rgb(var(--glass) / var(--glass-alpha));
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
   }
+}
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.rise-in {
+  animation: rise-in 0.45s ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

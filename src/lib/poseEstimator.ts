@@ -49,7 +49,10 @@ export class BrowserPoseEstimator {
     this.poseInstance = pose;
     pose.setOptions({
       modelComplexity: 1,
-      smoothLandmarks: true,
+      // MediaPipe's smoothing filter is timed by the wall clock. Frames are processed by seeking, at a
+      // speed that varies with machine load, so it made results differ between runs of the same video.
+      // The analysis smooths landmark signals itself using video timestamps instead.
+      smoothLandmarks: false,
       enableSegmentation: false,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,

@@ -358,7 +358,7 @@ export default function Home() {
         )}
 
         {isAnalyzing && (
-          <div className="panel mx-auto my-12 max-w-xl p-5 sm:my-20 sm:p-8">
+          <div className="panel rise-in mx-auto my-12 max-w-xl p-5 sm:my-20 sm:p-8">
             <div className="flex items-start gap-3">
               <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
               <div>
@@ -367,7 +367,7 @@ export default function Home() {
               </div>
             </div>
             <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-subtle" role="progressbar" aria-valuenow={analysisProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Video analysis progress">
-              <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${analysisProgress}%` }} />
+              <div className="h-full rounded-full bg-brand-gradient transition-[width] duration-300" style={{ width: `${analysisProgress}%` }} />
             </div>
             <div className="mt-2 flex items-center justify-between">
               <span className="text-xs font-medium tabular-nums text-body">{analysisProgress}%</span>
@@ -377,12 +377,25 @@ export default function Home() {
           </div>
         )}
 
+        {isAnalyzing && (
+          <div className="mx-auto -mt-6 mb-12 grid max-w-4xl gap-4 sm:grid-cols-3" aria-hidden="true">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="panel space-y-3 p-4">
+                <div className="skeleton h-3 w-1/2" />
+                <div className="skeleton h-7 w-2/3" />
+                <div className="skeleton h-2 w-full" />
+                <div className="skeleton h-2 w-5/6" />
+              </div>
+            ))}
+          </div>
+        )}
+
         {report && videoUrl && !isAnalyzing && (
           <div className="space-y-5 pb-8">
             <div className="flex flex-col gap-3 pt-8 sm:flex-row sm:items-end sm:justify-between">
               <div className="min-w-0">
                 <p className="eyebrow">Analysis report</p>
-                <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight text-ink">{videoFile?.name ?? "Running video"}</h2>
+                <h2 className="mt-1 truncate text-3xl font-bold tracking-tight text-ink">{videoFile?.name ?? "Running video"}</h2>
                 <p className="mt-1 text-xs text-muted">
                   {report.quality.analyzedStartSec.toFixed(1)}–{report.quality.analyzedEndSec.toFixed(1)} s analyzed
                   <span className="px-2 text-border-strong">·</span>{report.quality.sampledFrames} sampled frames
@@ -409,7 +422,7 @@ export default function Home() {
             </div>
             <RecordingWarnings quality={report.quality} />
             <div className="max-w-full overflow-x-auto">
-              <div className="inline-flex gap-1 rounded-xl border border-border bg-surface p-1 shadow-card" role="tablist" aria-label="Analysis report sections">
+              <div className="panel inline-flex gap-1 p-1" role="tablist" aria-label="Analysis report sections">
                 {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
                   <button
                     key={tab}
@@ -421,8 +434,8 @@ export default function Home() {
                     aria-selected={activeTab === tab}
                     aria-controls={`${tab}-report-panel`}
                     id={`${tab}-report-tab`}
-                    className={`min-h-9 shrink-0 rounded-lg px-3 text-xs font-semibold transition-colors sm:px-4 ${
-                      activeTab === tab ? "bg-primary text-on-primary" : "text-body hover:bg-subtle hover:text-ink"
+                    className={`min-h-9 shrink-0 rounded-xl px-3 text-xs font-semibold transition duration-150 active:scale-[0.97] sm:px-4 ${
+                      activeTab === tab ? "bg-button-gradient text-white shadow-md" : "text-body hover:bg-subtle hover:text-ink"
                     }`}
                   >
                     {tab === "summary" && "Summary"}

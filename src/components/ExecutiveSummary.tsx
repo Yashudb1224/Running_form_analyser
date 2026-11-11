@@ -3,7 +3,7 @@ import { Info } from "lucide-react";
 import { CompleteAnalysisReport, MetricResult } from "@/types/telemetry";
 import { MetricValue } from "./MetricValue";
 import { getMetricComparisons, MetricComparison } from "@/lib/metricComparison";
-import { BASIS_LABELS, MIN_COMPONENT_SCORE } from "@/lib/researchReferences";
+import { BASIS_LABELS, EDGE_SCORE } from "@/lib/researchReferences";
 
 interface ExecutiveSummaryProps {
   report: CompleteAnalysisReport;
@@ -33,25 +33,32 @@ function ScoreRing({ score }: { score: number | null }) {
   const circumference = 2 * Math.PI * radius;
   const progress = score === null ? 0 : Math.max(0, Math.min(100, score)) / 100;
   return (
-    <svg viewBox="0 0 128 128" className="h-36 w-36 shrink-0" role="img" aria-label={score === null ? "Overall score unavailable" : `Overall score ${score} out of 100`}>
-      <circle cx="64" cy="64" r={radius} fill="none" strokeWidth="10" style={{ stroke: "rgb(var(--subtle))" }} />
+    <svg viewBox="0 0 128 128" className="h-40 w-40 shrink-0 drop-shadow-[0_8px_18px_rgb(79_70_229_/_0.25)]" role="img" aria-label={score === null ? "Overall score unavailable" : `Overall score ${score} out of 100`}>
+      <defs>
+        <linearGradient id="score-ring-gradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" style={{ stopColor: "rgb(var(--brand-from))" }} />
+          <stop offset="100%" style={{ stopColor: "rgb(var(--brand-to))" }} />
+        </linearGradient>
+      </defs>
+      <circle cx="64" cy="64" r={radius} fill="none" strokeWidth="11" style={{ stroke: "rgb(var(--subtle))" }} />
       {score !== null && (
         <circle
           cx="64"
           cy="64"
           r={radius}
           fill="none"
-          strokeWidth="10"
+          strokeWidth="11"
           strokeLinecap="round"
           strokeDasharray={`${circumference * progress} ${circumference}`}
           transform="rotate(-90 64 64)"
-          style={{ stroke: scoreColor(score) }}
+          stroke="url(#score-ring-gradient)"
+          className="transition-[stroke-dasharray] duration-700 ease-out"
         />
       )}
-      <text x="64" y="62" textAnchor="middle" style={{ fontSize: 32, fontWeight: 600, fill: "rgb(var(--ink))" }}>
+      <text x="64" y="64" textAnchor="middle" style={{ fontSize: 36, fontWeight: 800, fill: "rgb(var(--ink))" }}>
         {score === null ? "—" : score}
       </text>
-      <text x="64" y="82" textAnchor="middle" style={{ fontSize: 11, fill: "rgb(var(--muted))" }}>
+      <text x="64" y="84" textAnchor="middle" style={{ fontSize: 11, fill: "rgb(var(--muted))" }}>
         out of 100
       </text>
     </svg>
@@ -140,7 +147,7 @@ function RangeBar({ comparison }: { comparison: MetricComparison }) {
 
 function MetricComparisonCard({ comparison }: { comparison: MetricComparison }) {
   return (
-    <article className="panel flex min-w-0 flex-col p-4">
+    <article className="panel panel-interactive flex min-w-0 flex-col p-4">
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-[13px] font-semibold text-ink">{comparison.label}</h3>
         <span className={`status-pill ${POSITION_STYLES[comparison.position]}`}>{comparison.positionText}</span>
@@ -169,11 +176,12 @@ export const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({ report }) =>
   return (
     <section aria-label="Form summary" className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-        <div className="panel flex flex-col gap-6 p-5 sm:flex-row sm:items-center sm:p-6">
-          <ScoreRing score={formScore.overallScore.value} />
-          <div className="min-w-0">
+        <div className="panel relative flex flex-col gap-6 overflow-hidden p-5 sm:flex-row sm:items-center sm:p-6">
+          <div className="pointer-events-none absolute inset-0 bg-brand-soft" aria-hidden="true" />
+          <div className="relative"><ScoreRing score={formScore.overallScore.value} /></div>
+          <div className="relative min-w-0">
             <p className="eyebrow">Overall form score</p>
-            <h3 className="mt-1 text-xl font-semibold tracking-tight text-ink">{formScore.category}</h3>
+            <h3 className="mt-1 text-2xl font-bold tracking-tight text-ink">{formScore.category}</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
               {formScore.overallScore.value === null
                 ? formScore.overallScore.explanation
@@ -196,8 +204,9 @@ export const ExecutiveSummary: React.FC<ExecutiveSummaryProps> = ({ report }) =>
           <p className="mt-2 flex gap-2 rounded-lg bg-subtle px-3 py-2 text-[11px] leading-relaxed text-body">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-secondary" aria-hidden="true" />
             <span>
-              Each measure scores <strong className="font-semibold text-ink">100</strong> when it is inside the typical range
-              reported in research, and loses points the further outside it is (lowest {MIN_COMPONENT_SCORE}).
+              Each measure scores <strong className="font-semibold text-ink">100</strong> when it sits comfortably inside the
+              typical range reported in research, about {EDGE_SCORE} at the edge of the range, and drops steeply the further outside
+              it goes.
             </span>
           </p>
           <ul className="mt-4 space-y-4">

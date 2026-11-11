@@ -1,5 +1,5 @@
 import { FormScoreData, GaitMetrics, KinematicSequence, MetricResult, SymmetryMetrics, metric, unavailableMetric } from "../types/telemetry";
-import { REFERENCE_RANGES, ReferenceRange, getReferenceGuidance, scoreAgainstReference } from "./researchReferences";
+import { EDGE_SCORE, REFERENCE_RANGES, ReferenceRange, getReferenceGuidance, scoreAgainstReference } from "./researchReferences";
 
 // Left/right symmetry is reported as observed only: from a single side-on clip the far leg is tracked
 // less reliably than the near leg, so it does not feed the overall score.
@@ -25,7 +25,7 @@ function referenceScore(reference: ReferenceRange, value: number | null, unavail
     scoreAgainstReference(reference, value),
     "heuristic-estimate",
     "/ 100",
-    `100 inside ${reference.minimum}-${reference.maximum} ${reference.unit}; ${reference.penaltyPerUnit} points lost per ${reference.unit} outside.`
+    `100 well inside ${reference.minimum}-${reference.maximum} ${reference.unit}, ${EDGE_SCORE} at the edge, then ${reference.penaltyPerUnit} points lost per ${reference.unit} outside.`
   );
 }
 

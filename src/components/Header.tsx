@@ -19,14 +19,14 @@ export const Header: React.FC = () => {
   const avatar = auth.user?.imageUrl ?? undefined;
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-surface/90 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-50 border-b border-border/60 bg-surface/70 px-4 backdrop-blur-xl sm:px-6">
       <div className="mx-auto flex min-h-16 max-w-[1280px] items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-on-primary">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-md">
             <Activity className="h-5 w-5" aria-hidden="true" />
           </span>
           <div>
-            <h1 className="text-base font-semibold tracking-tight text-ink">Stride Lab</h1>
+            <h1 className="text-base font-bold tracking-tight text-ink">Stride <span className="text-gradient">Lab</span></h1>
             <p className="hidden text-[11px] font-medium text-muted sm:block">Running form analysis</p>
           </div>
         </div>

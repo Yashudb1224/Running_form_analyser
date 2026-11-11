@@ -32,12 +32,15 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
   };
 
   return (
-    <div className="mx-auto my-8 max-w-6xl sm:my-14">
+    <div className="rise-in mx-auto my-8 max-w-6xl sm:my-14">
       <div className="grid items-start gap-8 lg:grid-cols-[1fr_1.05fr] lg:gap-12">
         <section>
-          <p className="eyebrow">Video gait analysis</p>
-          <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl">
-            Measure your running form from a phone video
+          <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-brand-soft px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-gradient" aria-hidden="true" />
+            AI gait analysis
+          </span>
+          <h2 className="mt-4 text-4xl font-bold leading-[1.1] tracking-tight text-ink sm:text-5xl">
+            See your <span className="text-gradient">running form</span> like a lab does
           </h2>
           <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-body">
             Cadence, foot strike, knee bend, trunk lean and left/right symmetry, each compared with ranges reported in
@@ -48,8 +51,8 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
             <h3 className="text-sm font-semibold text-ink">For accurate results</h3>
             <ul className="mt-3 grid gap-3 sm:grid-cols-2">
               {filmingTips.map(({ icon: Icon, title, text }) => (
-                <li key={title} className="flex gap-3 rounded-xl border border-border bg-surface p-3.5 shadow-card">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.07] text-primary">
+                <li key={title} className="panel panel-interactive flex gap-3 p-3.5">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-md">
                     <Icon className="h-4 w-4" aria-hidden="true" />
                   </span>
                   <div>
@@ -69,10 +72,11 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          className={`flex min-h-80 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-colors sm:min-h-[26rem] ${
-            isDragging ? "border-primary bg-primary/[0.04]" : "border-border-strong bg-surface"
-          }`}
+          className={`gradient-border transition duration-200 ${isDragging ? "scale-[1.01] shadow-raised" : "shadow-card"}`}
         >
+          <div className={`flex min-h-80 flex-col items-center justify-center rounded-[14px] px-6 py-12 text-center sm:min-h-[26rem] ${
+            isDragging ? "bg-brand-soft" : "bg-surface"
+          }`}>
           <input
             ref={inputRef}
             type="file"
@@ -82,10 +86,11 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
             aria-hidden="true"
             onChange={handleFileChange}
           />
-          <span className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/[0.07] text-primary">
-            <Upload className="h-6 w-6" aria-hidden="true" />
+          <span className="relative mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-lg">
+            <span className="absolute inset-0 animate-ping rounded-2xl bg-brand-gradient opacity-20 motion-reduce:hidden" aria-hidden="true" />
+            <Upload className="relative h-7 w-7" aria-hidden="true" />
           </span>
-          <h3 className="text-lg font-semibold text-ink">Drop a running video here</h3>
+          <h3 className="text-xl font-semibold text-ink">Drop a running video here</h3>
           <p className="mt-1 text-sm text-muted">MP4, MOV, AVI or WebM</p>
           <button type="button" onClick={() => inputRef.current?.click()} className="primary-button mt-6">
             <Video className="h-4 w-4" aria-hidden="true" />
@@ -101,6 +106,7 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
               <dd className="mt-1 text-sm font-medium text-ink">First {maxAnalyzedSeconds} seconds</dd>
             </div>
           </dl>
+          </div>
         </div>
       </div>
     </div>

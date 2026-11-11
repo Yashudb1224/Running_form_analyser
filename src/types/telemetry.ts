@@ -61,6 +61,8 @@ export interface FootStrikeEvent {
   stanceTime: number;
   /** Approximate initial-contact frame: first stance-window frame before the peak. */
   strikeFrame: number;
+  /** Sub-frame foot-strike time in seconds, when running direction is known; used to time strides. */
+  strikeTime: number | null;
   /** Frame of greatest knee flexion within the stance window. */
   midstanceFrame: number;
   shankAngleDeg: number | null;

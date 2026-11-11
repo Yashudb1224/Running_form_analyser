@@ -154,6 +154,33 @@ function buildContactEvent(
   let toeOffFrame = peak;
   while (toeOffFrame < contactSignal.length - 1 && inStance(toeOffFrame + 1)) toeOffFrame++;
 
+  // Foot strike is the moment the foot is furthest in front of the hips (Zeni et al., 2008), searched
+  // in the run-up to the stance peak. The lowest-ankle rule above lands too late for runners whose
+  // ankle keeps sinking after touchdown, so it is only the fallback when direction is unknown.
+  // Its sharp turning point also times strides more precisely than the flat bottom of the ankle path.
+  let strikeTime: number | null = null;
+  if (facing !== null) {
+    const forwardAt = (index: number): number | null => {
+      const frame = frames[index];
+      const heel = frame?.landmarks[leg === "left" ? 29 : 30];
+      const footPoint = validPoint(heel) ? heel : frame?.landmarks[ankleIndex];
+      const hip = hipCenterAt(frame, leg);
+      return validPoint(footPoint) && hip ? (footPoint.x - hip.x) * facing : null;
+    };
+    let bestForward = -Infinity;
+    for (let index = peak; index >= 0 && timestamps[peak] - timestamps[index] <= MAX_STANCE_HALF_WINDOW_SEC; index--) {
+      const forward = forwardAt(index);
+      if (forward !== null && forward > bestForward) {
+        bestForward = forward;
+        strikeFrame = index;
+      }
+    }
+    if (bestForward > -Infinity) {
+      const forwardSignal = frames.map((_, index) => (Math.abs(index - strikeFrame) <= 1 ? forwardAt(index) : null));
+      strikeTime = refinePeakTime(forwardSignal, timestamps, strikeFrame);
+    }
+  }
+
   let maxFlexion: number | null = null;
   let midstanceFrame = peak;
   for (let index = strikeFrame; index <= toeOffFrame; index++) {
@@ -176,6 +203,7 @@ function buildContactEvent(
     stanceFrame: peak,
     stanceTime: refinePeakTime(contactSignal, timestamps, peak),
     strikeFrame,
+    strikeTime,
     midstanceFrame,
     shankAngleDeg: rawShank === null || facing === null ? null : rawShank * facing,
     ankleAheadOfHipPct: validPoint(ankle) && hip && facing !== null && torso && torso > 0
@@ -295,21 +323,35 @@ export function analyzeGaitCycles(
     return emptyGaitMetrics("Ankle trajectory has no usable vertical range.");
   }
 
-  const prominence = Math.max(1, range * 0.08);
-  const leftSmooth = smoothArray(leftAnkleY, SMOOTHING_WINDOW);
-  const rightSmooth = smoothArray(rightAnkleY, SMOOTHING_WINDOW);
+  // A robust range (5th-95th percentile): a single stray ankle position must not inflate the peak
+  // threshold, or genuine landings are rejected as too small.
+  const ankleRange = percentile(validAnkleY, 0.95) - percentile(validAnkleY, 0.05);
+  const prominence = Math.max(1, ankleRange * 0.08);
+
+  // Perspective puts the far foot's ground contact higher in the image than the near foot's. Measuring
+  // each ankle relative to its own ground level (90th percentile of its image y) lets both feet's
+  // landings reach the same height, so far-foot landings are not lost as small bumps.
+  const groundLevel = (values: (number | null)[]) => {
+    const valid = finiteValues(values);
+    return valid.length ? percentile(valid, 0.9) : 0;
+  };
+  const leftGround = groundLevel(leftAnkleY);
+  const rightGround = groundLevel(rightAnkleY);
+  const leftRelative = leftAnkleY.map((value) => (value === null || !Number.isFinite(value) ? null : value - leftGround));
+  const rightRelative = rightAnkleY.map((value) => (value === null || !Number.isFinite(value) ? null : value - rightGround));
+  const leftSmooth = smoothArray(leftRelative, SMOOTHING_WINDOW);
+  const rightSmooth = smoothArray(rightRelative, SMOOTHING_WINDOW);
 
   // Contacts are found on a label-free signal: the lower of the two ankles in each frame (larger image
-  // y). It is identical whether or not the pose model swapped the legs, and peaks once per landing.
-  // Each landing is then attributed to whichever ankle is lower at that moment.
+  // y, relative to its ground level). It peaks once per landing whether or not the pose model swapped
+  // the legs. Each landing is then attributed to whichever ankle is lower at that moment.
   // Combine before smoothing so a label flip never blends the two feet inside the smoothing window.
-  const contactSignal = smoothArray(leftAnkleY.map((left, index) => {
-    const right = rightAnkleY[index];
-    if (left === null || !Number.isFinite(left)) return right;
-    if (right === null || !Number.isFinite(right)) return left;
+  const contactSignal = smoothArray(leftRelative.map((left, index) => {
+    const right = rightRelative[index];
+    if (left === null) return right;
+    if (right === null) return left;
     return Math.max(left, right);
   }), SMOOTHING_WINDOW);
-  const ankleRange = percentile(validAnkleY, 0.95) - percentile(validAnkleY, 0.05);
   const events = findPeaks(contactSignal, timestamps, MIN_STEP_SEC * 0.9, prominence, MIN_STEP_SEC).map((peak) => {
     const left = leftSmooth[peak];
     const right = rightSmooth[peak];
@@ -340,9 +382,13 @@ export function analyzeGaitCycles(
   // one contact of each foot, so a constant timing error on one leg (typical for the partly hidden far
   // leg) cancels out, and left/right label swaps by the pose model cannot affect it. Left-to-right
   // step intervals, by contrast, alternate short/long under such an error.
+  // Strides are timed from foot strike when every contact has one (sharp turning point), otherwise
+  // from the stance peaks.
+  const useStrikeTimes = events.length > 0 && events.every((event) => event.strikeTime !== null);
+  const contactTime = (event: FootStrikeEvent) => (useStrikeTimes ? (event.strikeTime as number) : event.stanceTime);
   const strides: number[] = [];
   for (let index = 2; index < events.length; index++) {
-    const duration = events[index].stanceTime - events[index - 2].stanceTime;
+    const duration = contactTime(events[index]) - contactTime(events[index - 2]);
     if (Number.isFinite(duration) && duration > 0) strides.push(duration);
   }
   const rawStrideMedian = median(strides);
@@ -361,9 +407,12 @@ export function analyzeGaitCycles(
   const hasCadence = enoughSteps && plausible;
   const cadence = hasCadence ? rawCadence : null;
   const meanStep = !hasCadence ? null : useStrides ? (mean(keptStrides) as number) / 2 : mean(durations);
-  const meanStride = mean(keptStrides);
-  const strideCv = hasCadence && keptStrides.length >= MIN_INTERVALS_FOR_VARIATION && meanStride
-    ? (Math.sqrt(keptStrides.reduce((sum, duration) => sum + (duration - meanStride) ** 2, 0) / keptStrides.length) / meanStride) * 100
+  // Robust coefficient of variation (1.4826 x median absolute deviation / median): equals the usual
+  // CV for normally distributed strides, but a few mistimed contacts cannot dominate it.
+  const medianStride = median(keptStrides);
+  const strideMad = medianStride === null ? null : median(keptStrides.map((duration) => Math.abs(duration - medianStride)));
+  const strideCv = hasCadence && keptStrides.length >= MIN_INTERVALS_FOR_VARIATION && medianStride && strideMad !== null
+    ? ((1.4826 * strideMad) / medianStride) * 100
     : null;
   const cadenceReason = enoughSteps && !plausible
     ? `The detected step rate (${rawCadence?.toFixed(0)} steps/min) is outside the plausible ${MIN_PLAUSIBLE_CADENCE}-${MAX_PLAUSIBLE_CADENCE} range, which indicates unreliable foot tracking.`
@@ -442,7 +491,7 @@ export function analyzeGaitCycles(
       "%",
       strideCv === null
         ? `At least ${MIN_INTERVALS_FOR_VARIATION} consistent strides are needed to estimate variation.`
-        : "Coefficient of variation of stride times (each contact to the contact after next) after removing missed-contact outliers."
+        : "Robust coefficient of variation (median absolute deviation) of stride times, each contact to the contact after next, timed at foot strike."
     ),
     stepCount: usableSteps.length,
     strideCount: hasCadence ? keptStrides.length : 0,
