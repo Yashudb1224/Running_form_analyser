@@ -33,6 +33,8 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; icon: typeof Sun }
 
 const SIDEBAR = { min: 200, max: 360, default: 256, collapsed: 76 } as const;
 const STORAGE_KEY = "stride-lab-sidebar";
+/** How far past the collapsed rail the cursor can be and still open the sidebar. */
+const HOVER_REACH = 24;
 
 interface AppShellProps {
   view: AppView;
@@ -184,34 +186,47 @@ function SidebarContent({ view, onNavigate, reportLabel, collapsed = false }: Om
   );
 }
 
-function readSidebarPreference(): { width: number; collapsed: boolean } {
+function readSidebarPreference(): { width: number; pinned: boolean } {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as { width?: number; collapsed?: boolean };
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as { width?: number; pinned?: boolean };
     const width = typeof stored.width === "number" ? Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, stored.width)) : SIDEBAR.default;
-    return { width, collapsed: stored.collapsed === true };
+    return { width, pinned: stored.pinned === true };
   } catch {
-    return { width: SIDEBAR.default, collapsed: false };
+    return { width: SIDEBAR.default, pinned: false };
   }
 }
 
 /**
- * App layout: a resizable, collapsible sidebar on large screens and a top bar with a slide-out menu
- * on small ones. The sidebar's width and collapsed state are remembered per browser.
+ * App layout: on large screens a sidebar that rests as an icon rail and slides open over the page
+ * when the cursor comes near it (or it is pinned open and resizable); on small screens a top bar with
+ * a slide-out menu. The sidebar's width and pinned state are remembered per browser.
  */
 export function AppShell({ view, onNavigate, reportLabel, children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [width, setWidth] = useState<number>(SIDEBAR.default);
-  const [collapsed, setCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const [resizing, setResizing] = useState(false);
+  // While unpinned, the sidebar opens over the page when the cursor (or keyboard focus) comes near.
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
 
   useEffect(() => {
     const stored = readSidebarPreference();
     setWidth(stored.width);
-    setCollapsed(stored.collapsed);
+    setPinned(stored.pinned);
   }, []);
 
-  const remember = useCallback((next: { width: number; collapsed: boolean }) => {
+  useEffect(() => () => {
+    if (peekTimer.current) window.clearTimeout(peekTimer.current);
+  }, []);
+
+  const schedulePeek = (open: boolean) => {
+    if (peekTimer.current) window.clearTimeout(peekTimer.current);
+    peekTimer.current = window.setTimeout(() => setPeek(open), open ? 80 : 250);
+  };
+
+  const remember = useCallback((next: { width: number; pinned: boolean }) => {
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
@@ -238,7 +253,7 @@ export function AppShell({ view, onNavigate, reportLabel, children }: AppShellPr
       setResizing(false);
       dragStart.current = null;
       setWidth((current) => {
-        remember({ width: current, collapsed: false });
+        remember({ width: current, pinned: true });
         return current;
       });
     };
@@ -254,9 +269,10 @@ export function AppShell({ view, onNavigate, reportLabel, children }: AppShellPr
     };
   }, [resizing, remember]);
 
-  const toggleCollapsed = () => {
-    setCollapsed((current) => {
-      remember({ width, collapsed: !current });
+  const togglePinned = () => {
+    setPeek(false);
+    setPinned((current) => {
+      remember({ width, pinned: !current });
       return !current;
     });
   };
@@ -266,32 +282,54 @@ export function AppShell({ view, onNavigate, reportLabel, children }: AppShellPr
     event.preventDefault();
     const next = Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, width + (event.key === "ArrowRight" ? 16 : -16)));
     setWidth(next);
-    remember({ width: next, collapsed: false });
+    remember({ width: next, pinned: true });
   };
 
   const navigate = (next: AppView) => {
     setMenuOpen(false);
+    setPeek(false);
     onNavigate(next);
   };
 
-  const sidebarWidth = collapsed ? SIDEBAR.collapsed : width;
+  const expanded = pinned || peek;
+  const floating = peek && !pinned;
 
   return (
-    <div className="app-shell lg:pl-[var(--sidebar-width)]" style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+    <div
+      className="app-shell lg:pl-[var(--content-offset)]"
+      style={{ "--sidebar-width": `${expanded ? width : SIDEBAR.collapsed}px`, "--content-offset": `${pinned ? width : SIDEBAR.collapsed}px` } as React.CSSProperties}
+    >
+      {!pinned && (
+        // An invisible strip just right of the rail, so the sidebar opens when the cursor gets near it.
+        <div
+          aria-hidden="true"
+          onMouseEnter={() => schedulePeek(true)}
+          onMouseLeave={() => schedulePeek(false)}
+          className="fixed inset-y-0 z-30 hidden lg:block"
+          style={{ left: SIDEBAR.collapsed, width: HOVER_REACH }}
+        />
+      )}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 hidden w-[var(--sidebar-width)] border-r border-border/60 bg-surface/70 backdrop-blur-xl lg:block ${resizing ? "" : "transition-[width] duration-200"}`}
+        onMouseEnter={() => !pinned && schedulePeek(true)}
+        onMouseLeave={() => !pinned && schedulePeek(false)}
+        onFocus={() => !pinned && setPeek(true)}
+        onBlur={(event) => {
+          if (!pinned && !event.currentTarget.contains(event.relatedTarget as Node | null)) setPeek(false);
+        }}
+        className={`fixed inset-y-0 left-0 z-40 hidden w-[var(--sidebar-width)] border-r border-border/60 backdrop-blur-xl lg:block ${floating ? "bg-surface/95 shadow-2xl" : "bg-surface/70"} ${resizing ? "" : "transition-[width,box-shadow] duration-200 ease-out"}`}
       >
-        <SidebarContent view={view} onNavigate={navigate} reportLabel={reportLabel} collapsed={collapsed} />
+        <SidebarContent view={view} onNavigate={navigate} reportLabel={reportLabel} collapsed={!expanded} />
         <button
           type="button"
-          onClick={toggleCollapsed}
+          onClick={togglePinned}
           className="absolute -right-3 top-16 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-muted shadow-card transition hover:text-ink"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={pinned ? "Unpin sidebar (open on hover)" : "Pin sidebar open"}
+          aria-pressed={pinned}
+          title={pinned ? "Unpin: open on hover" : "Pin open"}
         >
-          {collapsed ? <ChevronsRight className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronsLeft className="h-3.5 w-3.5" aria-hidden="true" />}
+          {!pinned ? <ChevronsRight className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronsLeft className="h-3.5 w-3.5" aria-hidden="true" />}
         </button>
-        {!collapsed && (
+        {pinned && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -307,7 +345,7 @@ export function AppShell({ view, onNavigate, reportLabel, children }: AppShellPr
             }}
             onDoubleClick={() => {
               setWidth(SIDEBAR.default);
-              remember({ width: SIDEBAR.default, collapsed: false });
+              remember({ width: SIDEBAR.default, pinned: true });
             }}
             title="Drag to resize · double-click to reset"
             className={`absolute inset-y-0 -right-1 w-2 cursor-col-resize transition-colors hover:bg-primary/30 focus-visible:bg-primary/40 ${resizing ? "bg-primary/40" : ""}`}
