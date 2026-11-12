@@ -71,6 +71,7 @@ export const KinematicCharts: React.FC<KinematicChartsProps> = ({ report }) => {
         <h3 id="kinematic-heading" className="mt-1 text-lg font-semibold text-ink">Kinematic time series</h3>
       </div>
 
+      <div className="grid gap-4 xl:grid-cols-2">
       <article className="chart-panel">
         <div className="mb-3">
           <h4 className="text-sm font-semibold text-ink">Internal knee angle</h4>
@@ -159,6 +160,7 @@ export const KinematicCharts: React.FC<KinematicChartsProps> = ({ report }) => {
           ) : <ChartEmptyState />}
         </div>
       </article>
+      </div>
     </section>
   );
 };

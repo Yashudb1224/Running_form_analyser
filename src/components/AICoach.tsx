@@ -161,13 +161,14 @@ function HistoryPanel({
   );
 }
 
-export function AICoach({ report, videoName, analysisId }: { report: CompleteAnalysisReport; videoName: string; analysisId: string | null }) {
+export function AICoach({ report, videoName, analysisId }: { report: CompleteAnalysisReport | null; videoName: string | null; analysisId: string | null }) {
   const auth = useAuth();
   const historyEnabled = Boolean(auth.user) && isSupabaseConfigured();
+  // Without an open report the coach can still browse and continue saved chats.
   const freshState = useCallback((): CoachState => ({
     conversationId: null,
-    title: `${videoName} · ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })}`,
-    context: toCoachContext(buildCoachRequest(report)),
+    title: `${videoName ?? "Running video"} · ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })}`,
+    context: report ? toCoachContext(buildCoachRequest(report)) : { overallScore: null, category: "", metrics: [] },
     advice: null,
     messages: [],
     fromHistory: false,
@@ -200,6 +201,12 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
     void refreshList();
   }, [refreshList]);
 
+  // A new report starts a fresh coaching session (saved chats stay in the history panel).
+  useEffect(() => {
+    setState(freshState());
+    setError(null);
+  }, [freshState]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [state.messages.length, chatLoading]);
@@ -222,6 +229,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
   };
 
   const getCoaching = async () => {
+    if (!report) return;
     setSummaryLoading(true);
     setError(null);
     try {
@@ -294,6 +302,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
   };
 
   const hasContent = Boolean(state.advice) || state.messages.length > 0;
+  const canChat = state.context.metrics.length > 0;
 
   return (
     <section aria-labelledby="coach-heading" className="gradient-border shadow-raised">
@@ -320,7 +329,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                   History
                 </button>
               )}
-              <button type="button" onClick={() => void getCoaching()} disabled={summaryLoading} className="primary-button">
+              <button type="button" onClick={() => void getCoaching()} disabled={summaryLoading || !report} className="primary-button" title={report ? undefined : "Analyse a video first"}>
                 {summaryLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : state.advice && !state.fromHistory ? <RefreshCw className="h-4 w-4" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
                 {summaryLoading ? "Coaching…" : state.advice && !state.fromHistory ? "New coaching" : "Get AI coaching"}
               </button>
@@ -343,7 +352,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
               {state.fromHistory && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/25 bg-surface/80 px-3 py-2 text-xs text-body">
                   <span>Viewing saved chat <strong className="font-semibold text-ink">{state.title}</strong>. Answers use that session&apos;s measurements.</span>
-                  <button type="button" onClick={() => setState(freshState())} className="quiet-button min-h-7 px-2 text-[11px]">Back to this report</button>
+                  <button type="button" onClick={() => setState(freshState())} className="quiet-button min-h-7 px-2 text-[11px]">{report ? "Back to this report" : "Close chat"}</button>
                 </div>
               )}
 
@@ -372,7 +381,9 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                 <div className="max-h-[26rem] space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
                   {state.messages.length === 0 && (
                     <p className="text-xs text-muted">
-                      {hasContent ? "Ask anything about your form, drills or training." : "Ask a question, or get your coaching summary first."}
+                      {!canChat
+                        ? historyEnabled ? "Open a saved chat from the history panel, or analyse a video to start new coaching." : "Analyse a video to start coaching."
+                        : hasContent ? "Ask anything about your form, drills or training." : "Ask a question, or get your coaching summary first."}
                     </p>
                   )}
                   {state.messages.map((message, index) => (
@@ -393,7 +404,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                   )}
                   <div ref={chatEndRef} />
                 </div>
-                {state.messages.length === 0 && (
+                {state.messages.length === 0 && canChat && (
                   <div className="flex flex-wrap gap-2 px-4 pb-3">
                     {SUGGESTED_QUESTIONS.map((question) => (
                       <button key={question} type="button" onClick={() => void ask(question)} disabled={chatLoading} className="control-button min-h-7 rounded-full px-3 text-[11px]">
@@ -418,10 +429,11 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                       }
                     }}
                     rows={1}
-                    placeholder="e.g. How can I stop overstriding?"
+                    disabled={!canChat}
+                    placeholder={canChat ? "e.g. How can I stop overstriding?" : "Open a saved chat or analyse a video first"}
                     className="max-h-32 min-h-10 flex-1 resize-y rounded-xl border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-primary/50 focus:outline-none"
                   />
-                  <button type="submit" disabled={chatLoading || !draft.trim()} className="primary-button min-h-10 px-3" aria-label="Send question">
+                  <button type="submit" disabled={chatLoading || !draft.trim() || !canChat} className="primary-button min-h-10 px-3" aria-label="Send question">
                     {chatLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
                   </button>
                 </form>

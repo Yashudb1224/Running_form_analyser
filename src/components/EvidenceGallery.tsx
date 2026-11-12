@@ -10,6 +10,10 @@ import { useTheme } from "./ThemeProvider";
 interface EvidenceGalleryProps {
   report: CompleteAnalysisReport;
   onOpenInVideo: (time: number) => void;
+  /** "grid" spreads cards across the page; "column" fits them beside the video player. */
+  layout?: "grid" | "column";
+  /** Whether to include the stride-timing chart (it can be placed separately). */
+  showTimeline?: boolean;
 }
 
 const TIMELINE_WINDOW_SEC = 4;
@@ -83,7 +87,7 @@ function Lightbox({ evidence, onClose }: { evidence: EvidenceFrame; onClose: () 
 }
 
 /** Ankle height over a few seconds with each detected stance event marked: the evidence behind cadence. */
-function StepTimeline({ report }: { report: CompleteAnalysisReport }) {
+export function StepTimeline({ report }: { report: CompleteAnalysisReport }) {
   const palette = getChartPalette(useTheme().resolved);
   const { frames, kinematics, gait } = report;
   const data = useMemo(() => {
@@ -143,7 +147,7 @@ function StepTimeline({ report }: { report: CompleteAnalysisReport }) {
   );
 }
 
-export const EvidenceGallery: React.FC<EvidenceGalleryProps> = ({ report, onOpenInVideo }) => {
+export const EvidenceGallery: React.FC<EvidenceGalleryProps> = ({ report, onOpenInVideo, layout = "grid", showTimeline = true }) => {
   const [enlarged, setEnlarged] = useState<EvidenceFrame | null>(null);
   const { evidence } = report;
 
@@ -157,7 +161,7 @@ export const EvidenceGallery: React.FC<EvidenceGalleryProps> = ({ report, onOpen
         </p>
       </div>
       {evidence.length > 0 ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className={layout === "column" ? "grid gap-3 sm:grid-cols-2 xl:max-h-[44rem] xl:overflow-y-auto xl:pr-1" : "grid gap-4 sm:grid-cols-2 xl:grid-cols-3"}>
           {evidence.map((item) => (
             <EvidenceCard key={item.id} evidence={item} onEnlarge={() => setEnlarged(item)} onOpenInVideo={() => onOpenInVideo(item.timestamp)} />
           ))}
@@ -168,7 +172,7 @@ export const EvidenceGallery: React.FC<EvidenceGalleryProps> = ({ report, onOpen
           No evidence frames could be captured: no foot strikes, midstance or trunk positions were measured in this video.
         </div>
       )}
-      <StepTimeline report={report} />
+      {showTimeline && <StepTimeline report={report} />}
       {enlarged && <Lightbox evidence={enlarged} onClose={() => setEnlarged(null)} />}
     </section>
   );

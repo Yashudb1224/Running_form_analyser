@@ -1,16 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Header } from "@/components/Header";
+import { AppShell, AppView } from "@/components/AppShell";
+import { ReportDashboard } from "@/components/ReportDashboard";
 import { VideoUploader } from "@/components/VideoUploader";
-import { SeekRequest, TelemetryPlayer } from "@/components/TelemetryPlayer";
-import { EvidenceGallery } from "@/components/EvidenceGallery";
 import { AICoach } from "@/components/AICoach";
-import { ExecutiveSummary } from "@/components/ExecutiveSummary";
 import { MetricGuide } from "@/components/MetricGuide";
-import { KinematicCharts } from "@/components/KinematicCharts";
-import { SymmetryBreakdown } from "@/components/SymmetryBreakdown";
-import { AnalysisQuality, CompleteAnalysisReport, EvidenceFrame, FramePose } from "@/types/telemetry";
+import { CompleteAnalysisReport, EvidenceFrame, FramePose } from "@/types/telemetry";
 import { computeSequenceKinematics } from "@/lib/biomechanics";
 import { analyzeGaitCycles } from "@/lib/gaitCycle";
 import { evaluateSymmetryAndConsistency } from "@/lib/symmetryAnalyzer";
@@ -19,7 +15,7 @@ import { buildAnalysisQuality } from "@/lib/analysisQuality";
 import { captureEvidenceFrames } from "@/lib/evidenceFrames";
 import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
-import { FileText, RefreshCw, Loader2, AlertTriangle, CheckCircle2, CloudOff } from "lucide-react";
+import { Loader2, AlertTriangle, LineChart, Sparkles } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { SignInPanel } from "@/components/SignInPanel";
 import { AnalysisHistory } from "@/components/AnalysisHistory";
@@ -106,8 +102,7 @@ export default function Home() {
   const [progressMessage, setProgressMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [report, setReport] = useState<CompleteAnalysisReport | null>(null);
-  const [activeTab, setActiveTab] = useState<"summary" | "video" | "charts" | "symmetry" | "guide">("summary");
-  const [seekRequest, setSeekRequest] = useState<SeekRequest | null>(null);
+  const [view, setView] = useState<AppView>("new");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -138,6 +133,7 @@ export default function Home() {
   const analyzeVideo = async (url: string, videoName: string) => {
     const jobId = ++activeJobRef.current;
     setIsAnalyzing(true);
+    setView("report");
     setAnalysisProgress(1);
     setProgressMessage("Reading video metadata…");
     setErrorMessage(null);
@@ -290,12 +286,6 @@ export default function Home() {
     void analyzeVideo(url, file.name);
   };
 
-  const openInVideo = (time: number) => {
-    setSeekRequest({ time, id: Date.now() });
-    setActiveTab("video");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
   const resetAnalysis = () => {
     activeJobRef.current++;
     const processingVideo = processingVideoRef.current;
@@ -317,11 +307,10 @@ export default function Home() {
     setIsAnalyzing(false);
     setAnalysisProgress(0);
     setProgressMessage("");
-    setSeekRequest(null);
     setSaveStatus("idle");
     setSaveError(null);
     setSavedAnalysisId(null);
-    setActiveTab("summary");
+    setView("new");
   };
 
   const downloadReportPdf = async () => {
@@ -330,43 +319,50 @@ export default function Home() {
     downloadPdfReport(report, videoFile?.name ?? "running-analysis");
   };
 
+  const navigate = (next: AppView) => {
+    if (next === "new" && (report || isAnalyzing)) {
+      if (!window.confirm("Start a new analysis? The current report will close (saved reports stay in Progress).")) return;
+      resetAnalysis();
+      return;
+    }
+    setView(next);
+    window.scrollTo({ top: 0 });
+  };
+
+  const needsSignIn = auth.enabled && !auth.loading && !auth.user;
+  const historyAvailable = Boolean(auth.user) && isSupabaseConfigured();
+  const videoName = videoFile?.name ?? "Running video";
+  const signIn = <SignInPanel onSignIn={() => void auth.signInWithGoogle()} error={auth.error} />;
+
   return (
-    <div className="app-shell pb-12">
-      <Header />
-      <main className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
-        {!videoFile && !isAnalyzing && auth.enabled && auth.loading && (
-          <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-primary" aria-label="Checking sign-in" /></div>
-        )}
+    <AppShell view={view} onNavigate={navigate} reportLabel={report || isAnalyzing ? videoName : null}>
+      {errorMessage && (
+        <div role="alert" className="mt-6 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-ink">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+          <div className="flex-1"><strong>Analysis could not continue.</strong> {errorMessage}</div>
+          <button onClick={resetAnalysis} className="text-xs font-semibold underline underline-offset-2">Reset</button>
+        </div>
+      )}
 
-        {!videoFile && !isAnalyzing && auth.enabled && !auth.loading && !auth.user && (
-          <SignInPanel onSignIn={() => void auth.signInWithGoogle()} error={auth.error} />
-        )}
+      {auth.enabled && auth.loading && view !== "guide" && (
+        <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-primary" aria-label="Checking sign-in" /></div>
+      )}
 
-        {!videoFile && !isAnalyzing && (!auth.enabled || auth.user) && (
-          <>
-            <VideoUploader
-              onVideoSelected={handleVideoSelected}
-              samplingRateFps={SAMPLE_RATE_FPS}
-              maxAnalyzedSeconds={MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS}
-            />
-            {auth.user && isSupabaseConfigured() && <AnalysisHistory refreshKey={historyVersion} />}
-          </>
-        )}
+      {view === "new" && !auth.loading && (needsSignIn ? signIn : (
+        <VideoUploader
+          onVideoSelected={handleVideoSelected}
+          samplingRateFps={SAMPLE_RATE_FPS}
+          maxAnalyzedSeconds={MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS}
+        />
+      ))}
 
-        {errorMessage && (
-          <div role="alert" className="my-6 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-ink">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
-            <div className="flex-1"><strong>Analysis could not continue.</strong> {errorMessage}</div>
-            <button onClick={resetAnalysis} className="text-xs font-semibold underline underline-offset-2">Reset</button>
-          </div>
-        )}
-
-        {isAnalyzing && (
-          <div className="panel rise-in mx-auto my-12 max-w-xl p-5 sm:my-20 sm:p-8">
+      {view === "report" && isAnalyzing && (
+        <div className="pt-6 lg:pt-8">
+          <div className="panel rise-in mx-auto my-8 max-w-xl p-5 sm:my-14 sm:p-8">
             <div className="flex items-start gap-3">
               <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
-              <div>
-                <h3 className="text-base font-semibold text-ink">Analysing running video</h3>
+              <div className="min-w-0">
+                <h1 className="truncate text-base font-semibold text-ink">Analysing {videoName}</h1>
                 <p className="mt-1 text-xs text-body">{progressMessage}</p>
               </div>
             </div>
@@ -379,10 +375,7 @@ export default function Home() {
             </div>
             <p className="mt-3 text-[11px] text-muted">Sampling at {SAMPLE_RATE_FPS} frames/s, up to {MAX_SAMPLED_FRAMES} samples from the first {MAX_SAMPLED_FRAMES / SAMPLE_RATE_FPS} seconds.</p>
           </div>
-        )}
-
-        {isAnalyzing && (
-          <div className="mx-auto -mt-6 mb-12 grid max-w-4xl gap-4 sm:grid-cols-3" aria-hidden="true">
+          <div className="mx-auto grid max-w-4xl gap-4 sm:grid-cols-3" aria-hidden="true">
             {[0, 1, 2].map((index) => (
               <div key={index} className="panel space-y-3 p-4">
                 <div className="skeleton h-3 w-1/2" />
@@ -392,108 +385,67 @@ export default function Home() {
               </div>
             ))}
           </div>
-        )}
+        </div>
+      )}
 
-        {report && videoUrl && !isAnalyzing && (
-          <div className="space-y-5 pb-8">
-            <div className="flex flex-col gap-3 pt-8 sm:flex-row sm:items-end sm:justify-between">
-              <div className="min-w-0">
-                <p className="eyebrow">Analysis report</p>
-                <h2 className="mt-1 truncate text-3xl font-bold tracking-tight text-ink">{videoFile?.name ?? "Running video"}</h2>
-                <p className="mt-1 text-xs text-muted">
-                  {report.quality.analyzedStartSec.toFixed(1)}–{report.quality.analyzedEndSec.toFixed(1)} s analyzed
-                  <span className="px-2 text-border-strong">·</span>{report.quality.sampledFrames} sampled frames
-                  <span className="px-2 text-border-strong">·</span>{report.quality.samplingRateFps} samples/s
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {saveStatus === "saving" && (
-                  <span className="status-pill bg-subtle text-body"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Saving to history</span>
-                )}
-                {saveStatus === "saved" && (
-                  <span className="status-pill bg-success/10 text-success"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />Saved to history</span>
-                )}
-                {saveStatus === "error" && (
-                  <span className="status-pill bg-danger/10 text-danger" title={saveError ?? undefined}><CloudOff className="h-3.5 w-3.5" aria-hidden="true" />Not saved</span>
-                )}
-                <button onClick={downloadReportPdf} className="primary-button min-h-9">
-                  <FileText className="h-4 w-4" /> Export PDF
-                </button>
-                <button onClick={resetAnalysis} className="control-button">
-                  <RefreshCw className="h-4 w-4" /> New analysis
-                </button>
-              </div>
-            </div>
-            <RecordingWarnings quality={report.quality} />
-            <div className="max-w-full overflow-x-auto">
-              <div className="panel inline-flex gap-1 p-1" role="tablist" aria-label="Analysis report sections">
-                {(["summary", "video", "charts", "symmetry", "guide"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => {
-                      setSeekRequest(null);
-                      setActiveTab(tab);
-                    }}
-                    role="tab"
-                    aria-selected={activeTab === tab}
-                    aria-controls={`${tab}-report-panel`}
-                    id={`${tab}-report-tab`}
-                    className={`min-h-9 shrink-0 rounded-xl px-3 text-xs font-semibold transition duration-150 active:scale-[0.97] sm:px-4 ${
-                      activeTab === tab ? "bg-button-gradient text-white shadow-md" : "text-body hover:bg-subtle hover:text-ink"
-                    }`}
-                  >
-                    {tab === "summary" && "Summary"}
-                    {tab === "video" && "Video analysis"}
-                    {tab === "charts" && "Kinematics"}
-                    {tab === "symmetry" && "Gait & symmetry"}
-                    {tab === "guide" && "Metric guide"}
-                  </button>
-                ))}
-              </div>
-            </div>
+      {/* The report stays mounted while open so the video position and scroll survive page switches. */}
+      {report && videoUrl && !isAnalyzing && (
+        <div className={view === "report" ? "" : "hidden"}>
+          <ReportDashboard
+            report={report}
+            videoUrl={videoUrl}
+            videoName={videoName}
+            saveStatus={saveStatus}
+            saveError={saveError}
+            onExportPdf={() => void downloadReportPdf()}
+            onNewAnalysis={() => navigate("new")}
+            onOpenCoach={() => navigate("coach")}
+          />
+        </div>
+      )}
 
-            {activeTab === "summary" && (
-              <div role="tabpanel" id="summary-report-panel" aria-labelledby="summary-report-tab" className="space-y-8 pt-2">
-                <ExecutiveSummary report={report} />
-                <AICoach report={report} videoName={videoFile?.name ?? "Running video"} analysisId={savedAnalysisId} />
-                <EvidenceGallery report={report} onOpenInVideo={openInVideo} />
-              </div>
-            )}
-            {activeTab === "video" && (
-              <div role="tabpanel" id="video-report-panel" aria-labelledby="video-report-tab" className="pt-2">
-                <TelemetryPlayer
-                  videoUrl={videoUrl}
-                  frames={report.frames}
-                  kinematics={report.kinematics}
-                  events={report.gait.events}
-                  fps={report.fps}
-                  seekRequest={seekRequest}
-                />
-              </div>
-            )}
-            {activeTab === "charts" && <div role="tabpanel" id="charts-report-panel" aria-labelledby="charts-report-tab" className="pt-2"><KinematicCharts report={report} /></div>}
-            {activeTab === "symmetry" && <div role="tabpanel" id="symmetry-report-panel" aria-labelledby="symmetry-report-tab" className="pt-2"><SymmetryBreakdown report={report} /></div>}
-            {activeTab === "guide" && <div role="tabpanel" id="guide-report-panel" aria-labelledby="guide-report-tab" className="pt-2"><MetricGuide /></div>}
-          </div>
+      {view === "progress" && !auth.loading && (needsSignIn ? signIn : (
+        <div className="rise-in space-y-6 pt-6 lg:pt-8">
+          <PageHeading icon={<LineChart className="h-5 w-5" aria-hidden="true" />} eyebrow="Your history" title="Progress" text="Every saved analysis, with your form score over time." />
+          {historyAvailable
+            ? <AnalysisHistory refreshKey={historyVersion} />
+            : <p className="panel p-5 text-sm text-muted">Saved history needs sign-in and a configured database.</p>}
+        </div>
+      ))}
+
+      {/* The coach stays mounted so its coaching and chat survive page switches. */}
+      <div className={view === "coach" && !auth.loading ? "rise-in space-y-6 pt-6 lg:pt-8" : "hidden"}>
+        {needsSignIn ? signIn : (
+          <>
+            <PageHeading
+              icon={<Sparkles className="h-5 w-5" aria-hidden="true" />}
+              eyebrow="Powered by Google Gemini"
+              title="AI Coach"
+              text={report ? `Coaching for ${videoName}. Saved chats are in the history panel.` : "Reopen a saved chat, or analyse a video to start new coaching."}
+            />
+            <AICoach report={report} videoName={report ? videoName : null} analysisId={savedAnalysisId} />
+          </>
         )}
-      </main>
-    </div>
+      </div>
+
+      {view === "guide" && (
+        <div className="rise-in pt-6 lg:pt-8">
+          <MetricGuide />
+        </div>
+      )}
+    </AppShell>
   );
 }
 
-/** Shown only when something about the recording needs attention; otherwise nothing is rendered. */
-function RecordingWarnings({ quality }: { quality: AnalysisQuality }) {
-  if (!quality.warnings.length) return null;
+function PageHeading({ icon, eyebrow, title, text }: { icon: React.ReactNode; eyebrow: string; title: string; text: string }) {
   return (
-    <section className="panel border-warning/40 p-4" aria-label="Recording warnings">
-      <ul className="space-y-1.5">
-        {quality.warnings.map((warning) => (
-          <li key={warning} className="flex gap-2 text-xs leading-relaxed text-body">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-            {warning}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <header className="flex items-start gap-3">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-md">{icon}</span>
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h1 className="mt-0.5 text-3xl font-bold tracking-tight text-ink">{title}</h1>
+        <p className="mt-1 text-sm text-muted">{text}</p>
+      </div>
+    </header>
   );
 }
