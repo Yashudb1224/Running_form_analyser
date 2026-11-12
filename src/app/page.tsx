@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AppShell, AppView } from "@/components/AppShell";
 import { ReportDashboard } from "@/components/ReportDashboard";
+import { MASCOT_NAME } from "@/components/Mascot";
 import { VideoUploader } from "@/components/VideoUploader";
 import { AICoach } from "@/components/AICoach";
 import { MetricGuide } from "@/components/MetricGuide";
@@ -15,7 +16,8 @@ import { buildAnalysisQuality } from "@/lib/analysisQuality";
 import { captureEvidenceFrames } from "@/lib/evidenceFrames";
 import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
-import { Loader2, AlertTriangle, LineChart, Sparkles } from "lucide-react";
+import { Loader2, AlertTriangle, Dumbbell, LineChart, Sparkles } from "lucide-react";
+import { Trainer } from "@/components/Trainer";
 import { useAuth } from "@/components/AuthProvider";
 import { SignInPanel } from "@/components/SignInPanel";
 import { AnalysisHistory } from "@/components/AnalysisHistory";
@@ -419,14 +421,28 @@ export default function Home() {
           <>
             <PageHeading
               icon={<Sparkles className="h-5 w-5" aria-hidden="true" />}
-              eyebrow="Powered by Google Gemini"
-              title="AI Coach"
-              text={report ? `Coaching for ${videoName}. Saved chats are in the history panel.` : "Reopen a saved chat, or analyse a video to start new coaching."}
+              eyebrow="Your AI running buddy · powered by Google Gemini"
+              title={`Ask ${MASCOT_NAME}`}
+              text={report
+                ? `Coaching for ${videoName}, with your full history of sessions and chats.`
+                : "Ask about your progress across all saved sessions, reopen a chat, or analyse a video for new coaching."}
             />
             <AICoach report={report} videoName={report ? videoName : null} analysisId={savedAnalysisId} />
           </>
         )}
       </div>
+
+      {view === "trainer" && !auth.loading && (
+        <div className="rise-in space-y-6 pt-6 lg:pt-8">
+          <PageHeading
+            icon={<Dumbbell className="h-5 w-5" aria-hidden="true" />}
+            eyebrow="Strength & drills"
+            title="Trainer"
+            text="Exercises picked for your weakest measures, each with an animated demonstration."
+          />
+          <Trainer report={report} videoName={report ? videoName : null} onAskDash={() => navigate("coach")} />
+        </div>
+      )}
 
       {view === "guide" && (
         <div className="rise-in pt-6 lg:pt-8">

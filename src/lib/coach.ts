@@ -63,10 +63,10 @@ export function buildCoachRequest(report: CompleteAnalysisReport): CoachRequest 
 }
 
 /** Validates an incoming request body on the server; returns an error message or null. */
-export function validateCoachRequest(body: unknown): string | null {
+export function validateCoachRequest(body: unknown, options: { allowNoMetrics?: boolean } = {}): string | null {
   if (!body || typeof body !== "object") return "Request body must be a JSON object.";
   const request = body as Partial<CoachRequest>;
-  if (!Array.isArray(request.metrics) || request.metrics.length === 0) return "No metrics were provided.";
+  if (!Array.isArray(request.metrics) || (request.metrics.length === 0 && !options.allowNoMetrics)) return "No metrics were provided.";
   if (request.metrics.length > COACH_LIMITS.maxMetrics) return "Too many metrics.";
   if (!request.metrics.every((metric) => metric && typeof metric.label === "string" && typeof metric.value === "string")) {
     return "Metrics are malformed.";
@@ -80,7 +80,14 @@ export function validateCoachRequest(body: unknown): string | null {
   return null;
 }
 
-export const COACH_SYSTEM_PROMPT = `You are an experienced, encouraging running coach reviewing a recreational runner's form.
+const DASH_PERSONA = `You are Dash, Stride Lab's running-buddy mascot and AI running coach: upbeat, warm and encouraging, with the occasional light running pun (at most one per reply).`;
+
+const HISTORY_RULES = `You have full access to this runner's saved history: every analysed session and your earlier coaching chats are listed in the context under RUNNER'S SAVED SESSIONS and EARLIER COACHING CHATS.
+- Use it to compare sessions, describe trends (improving, steady or worse) with the actual numbers and dates, and remember what you discussed before.
+- Never say you cannot access other reports or earlier chats. If the history is empty, say this is the first saved session.`;
+
+export const COACH_SYSTEM_PROMPT = `${DASH_PERSONA} You are reviewing a recreational runner's form.
+${HISTORY_RULES}
 You receive measurements from a video gait analysis and annotated frames from the runner's video (shin angle at foot strike, knee bend at midstance, trunk lean).
 Rules:
 - Treat the provided measurements as correct. Do not invent new numbers or contradict them.
@@ -169,6 +176,8 @@ export interface ChatMessage {
 export interface CoachChatRequest extends CoachRequest {
   advice: CoachAdvice | null;
   messages: ChatMessage[];
+  /** The open saved conversation, excluded from the history summary because it is sent in full. */
+  conversationId?: string | null;
 }
 
 export const CHAT_LIMITS = {
@@ -176,16 +185,18 @@ export const CHAT_LIMITS = {
   maxMessageChars: 1000,
 } as const;
 
-export const COACH_CHAT_SYSTEM_PROMPT = `You are the same friendly running coach, now answering the runner's follow-up questions.
+export const COACH_CHAT_SYSTEM_PROMPT = `${DASH_PERSONA} You are now answering the runner's follow-up questions.
+${HISTORY_RULES}
 Rules:
-- Ground every answer in this runner's measurements and the coaching already given; refer to their numbers when relevant.
+- Ground every answer in this runner's current measurements, the coaching already given and their saved history; refer to their numbers and dates when relevant.
 - Treat the measurements as correct and never invent new ones.
 - Answer in plain language in at most about 120 words. Use short paragraphs or a short list when it helps.
 - Stay on running, running form, training, drills, warm-ups and general fitness. Politely decline unrelated requests.
 - Never diagnose injuries or prescribe treatment. If the runner mentions pain or injury, give general guidance and recommend seeing a physiotherapist or doctor.`;
 
 export function validateCoachChatRequest(body: unknown): string | null {
-  const base = validateCoachRequest(body);
+  // Chats may run without a current session and draw only on the saved history.
+  const base = validateCoachRequest(body, { allowNoMetrics: true });
   if (base) return base;
   const request = body as Partial<CoachChatRequest>;
   if (!Array.isArray(request.messages) || request.messages.length === 0) return "No question was provided.";
@@ -208,11 +219,15 @@ export function buildCoachChatContext(request: CoachChatRequest): string {
       ...advice.drills.map((drill) => `Drill: ${drill.name}: ${drill.how}`),
     ].join("\n")
     : "No coaching summary has been given yet.";
+  if (!request.metrics.length) {
+    return "No single session is open: answer from the runner's saved sessions and earlier chats.";
+  }
   return `${buildCoachPrompt(request).replace("Write the coaching feedback.", "")}\n${coaching}`;
 }
 
 export const SUGGESTED_QUESTIONS = [
   "How do I fix my biggest issue?",
+  "Compare this run with my earlier ones",
   "What cadence should I aim for?",
   "Give me a 2-week plan to improve my form",
   "Which warm-up drills suit me?",

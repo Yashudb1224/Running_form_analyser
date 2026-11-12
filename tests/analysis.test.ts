@@ -19,6 +19,9 @@ import { correctLegSwaps, mergedLegFramePct } from "../src/lib/legTracking";
 import { toAnalysisRecord } from "../src/lib/analysisRecord";
 import { buildCoachChatContext, buildCoachPrompt, buildCoachRequest, parseCoachAdvice, validateCoachChatRequest, validateCoachRequest } from "../src/lib/coach";
 import { toCoachContext } from "../src/lib/coachConversations";
+import { buildRunnerHistory } from "../src/lib/coachHistory";
+import { EXERCISES, detectWeaknesses, recommendExercises } from "../src/lib/exercises";
+import { EXERCISE_ANIMATIONS, FIGURE, blendPoses, computeSkeleton } from "../src/lib/exerciseAnimations";
 import { EDGE_SCORE, REFERENCE_RANGES, MIN_COMPONENT_SCORE, getReferencePosition, scoreAgainstReference } from "../src/lib/researchReferences";
 import { convertMediaPipeLandmarks, createUnavailableFrame, hasSufficientTrackingCoverage } from "../src/lib/poseEstimator";
 import { CompleteAnalysisReport, FramePose, GaitMetrics, KinematicSequence, Landmark, metric } from "../src/types/telemetry";
@@ -611,4 +614,55 @@ test("coach follow-up chats are validated and grounded in the saved context", ()
   // Saved conversations keep the measurements but never the images.
   const saved = toCoachContext({ ...context, images: [{ title: "frame", data: "QUJD" }] });
   assert.ok(!("images" in saved) && saved.metrics.length === 1);
+});
+
+test("the trainer finds weaknesses outside the research ranges and targets them", () => {
+  const weaknesses = detectWeaknesses({ cadence: 150, shin: 16, knee: 42, lean: 6, strideCv: 2, symmetry: 4 });
+  assert.deepEqual(weaknesses.map((weakness) => weakness.id).sort(), ["lowCadence", "overstride"]);
+  assert.equal(weaknesses[0].id, "overstride", "the larger relative miss comes first");
+  const plan = recommendExercises(weaknesses);
+  assert.ok(plan.length > 0 && plan.length <= 6);
+  assert.ok(plan.every(({ exercise, reasons }) => reasons.every((reason) => exercise.targets.includes(reason))));
+  assert.ok(plan[0].exercise.targets.includes("overstride"));
+  // In range everywhere: a maintenance routine, no weaknesses.
+  assert.equal(detectWeaknesses({ cadence: 172, shin: 4, knee: 42, lean: 7, strideCv: 2, symmetry: 3 }).length, 0);
+  assert.ok(recommendExercises([]).length > 0);
+  // Missing measurements are ignored rather than flagged.
+  assert.equal(detectWeaknesses({ cadence: null, shin: null, knee: null, lean: null, strideCv: null, symmetry: null }).length, 0);
+});
+
+test("every exercise animation is grounded and stays inside the figure", () => {
+  for (const exercise of EXERCISES) assert.ok(EXERCISE_ANIMATIONS[exercise.animation], `${exercise.id} has an animation`);
+  for (const [id, animation] of Object.entries(EXERCISE_ANIMATIONS)) {
+    for (let step = 0; step < animation.keyframes.length; step++) {
+      for (const t of [0, 0.5]) {
+        const pose = blendPoses(animation.keyframes[step], animation.keyframes[(step + 1) % animation.keyframes.length], t);
+        const skeleton = computeSkeleton(pose);
+        const points = [skeleton.hip, skeleton.shoulder, skeleton.head, skeleton.near.toe, skeleton.far.toe, skeleton.near.knee, skeleton.nearArm.wrist];
+        const lowest = Math.max(...points.map((point) => point.y), skeleton.far.ankle.y, skeleton.near.ankle.y, skeleton.farArm.wrist.y, skeleton.nearArm.elbow.y, skeleton.farArm.elbow.y, skeleton.far.knee.y);
+        assert.ok(Math.abs(lowest - (FIGURE.ground - (pose.lift ?? 0))) < 1e-6 || lowest <= FIGURE.ground, `${id} touches the ground`);
+        assert.ok(points.every((point) => point.x > 0 && point.x < FIGURE.width && point.y > 0 && point.y <= FIGURE.ground + 1e-6), `${id} stays in frame`);
+      }
+    }
+  }
+});
+
+test("the coach history lists saved sessions oldest first and skips the open chat", () => {
+  const history = buildRunnerHistory(
+    [
+      { id: "b", created_at: "2026-11-11T12:58:00Z", video_name: "test 4.mp4", overall_score: 89, cadence_spm: 175, shank_angle_deg: 12.4, knee_flexion_deg: 50, trunk_lean_deg: 5, stride_cv_pct: 3.6, symmetry_index_pct: 6, landing_offset_torso_pct: 51 },
+      { id: "a", created_at: "2026-11-10T09:00:00Z", video_name: "test 1.mp4", overall_score: 87, cadence_spm: 161, shank_angle_deg: 13, knee_flexion_deg: 44.4, trunk_lean_deg: 3.9, stride_cv_pct: 2.8, symmetry_index_pct: null, landing_offset_torso_pct: null },
+    ],
+    [
+      { id: "open", created_at: "2026-11-11T13:00:00Z", title: "test 4 · 11 Nov", advice: null, messages: [{ role: "user", text: "current chat" }] },
+      { id: "old", created_at: "2026-11-10T09:05:00Z", title: "test 1 · 10 Nov", advice: { headline: "Land under your hips", strengths: [], priorities: [{ title: "Overstride", why: "", cue: "" }], drills: [], note: "" }, messages: [{ role: "user", text: "How do I fix my overstride?" }] },
+    ],
+    "open"
+  );
+  assert.ok(history.indexOf("test 1.mp4") < history.indexOf("test 4.mp4"), "oldest session first");
+  assert.match(history, /cadence 161 spm/);
+  assert.match(history, /symmetry index n\/a/);
+  assert.match(history, /Runner: How do I fix my overstride\?/);
+  assert.ok(!history.includes("current chat"), "the open conversation is not repeated");
+  assert.match(buildRunnerHistory([], [], null), /None saved yet/);
 });

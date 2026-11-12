@@ -36,6 +36,9 @@ try {
     "src/lib/analysisRecord.ts",
     "src/lib/coach.ts",
     "src/lib/coachConversations.ts",
+    "src/lib/coachHistory.ts",
+    "src/lib/exercises.ts",
+    "src/lib/exerciseAnimations.ts",
     "src/lib/pdfReport.ts",
     "src/lib/poseEstimator.ts",
   ], { cwd: root, stdio: "inherit" });

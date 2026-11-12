@@ -6,6 +6,7 @@ import { EvidenceGallery, StepTimeline } from "./EvidenceGallery";
 import { KinematicCharts } from "./KinematicCharts";
 import { SymmetryBreakdown } from "./SymmetryBreakdown";
 import { SeekRequest, TelemetryPlayer } from "./TelemetryPlayer";
+import { MASCOT_NAME, Mascot } from "./Mascot";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -127,7 +128,7 @@ export function ReportDashboard({ report, videoUrl, videoName, saveStatus, saveE
             </button>
           ))}
           <button type="button" onClick={onOpenCoach} className="ml-auto inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-primary transition hover:bg-brand-soft">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Ask AI Coach
+            <Mascot size={18} /> Ask {MASCOT_NAME}
           </button>
         </div>
       </nav>
@@ -137,16 +138,14 @@ export function ReportDashboard({ report, videoUrl, videoName, saveStatus, saveE
         <div className="gradient-border">
           <div className="flex flex-col gap-4 rounded-[14px] bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-md">
-                <Sparkles className="h-5 w-5" aria-hidden="true" />
-              </span>
+              <Mascot size={48} className="-my-1 shrink-0" />
               <div>
-                <p className="text-sm font-semibold text-ink">Want to know what to work on?</p>
-                <p className="mt-0.5 text-xs text-muted">The AI Coach turns these results into priorities, running cues and drills, and answers your questions.</p>
+                <p className="text-sm font-semibold text-ink">Want to know what to work on? Ask {MASCOT_NAME}!</p>
+                <p className="mt-0.5 text-xs text-muted">Your AI running buddy turns these results into priorities, cues and drills, compares this run with your earlier ones, and answers your questions.</p>
               </div>
             </div>
             <button type="button" onClick={onOpenCoach} className="primary-button shrink-0">
-              <Sparkles className="h-4 w-4" aria-hidden="true" /> Open AI Coach
+              <Sparkles className="h-4 w-4" aria-hidden="true" /> Chat with {MASCOT_NAME}
             </button>
           </div>
         </div>

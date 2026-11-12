@@ -11,6 +11,7 @@ import {
 } from "@/lib/coachConversations";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useAuth } from "./AuthProvider";
+import { MASCOT_NAME, Mascot } from "./Mascot";
 
 interface CoachState {
   conversationId: string | null;
@@ -167,7 +168,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
   // Without an open report the coach can still browse and continue saved chats.
   const freshState = useCallback((): CoachState => ({
     conversationId: null,
-    title: `${videoName ?? "Running video"} · ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })}`,
+    title: `${report ? (videoName ?? "Running video") : "Progress chat"} · ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })}`,
     context: report ? toCoachContext(buildCoachRequest(report)) : { overallScore: null, category: "", metrics: [] },
     advice: null,
     messages: [],
@@ -257,6 +258,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
         images: [],
         advice: asked.advice,
         messages: asked.messages.slice(-CHAT_LIMITS.maxMessages + 1),
+        conversationId: asked.conversationId,
       });
       const answered = { ...asked, messages: [...asked.messages, { role: "coach" as const, text: reply }] };
       setState(answered);
@@ -302,7 +304,8 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
   };
 
   const hasContent = Boolean(state.advice) || state.messages.length > 0;
-  const canChat = state.context.metrics.length > 0;
+  // With saved history, Dash can answer about past sessions even when no report is open.
+  const canChat = state.context.metrics.length > 0 || historyEnabled;
 
   return (
     <section aria-labelledby="coach-heading" className="gradient-border shadow-raised">
@@ -311,14 +314,12 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
         <div className="relative">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-md">
-                <Sparkles className="h-5 w-5" aria-hidden="true" />
-              </span>
+              <Mascot size={60} mood={summaryLoading || chatLoading ? "thinking" : state.advice ? "happy" : "idle"} className="-my-2 shrink-0" />
               <div>
-                <h3 id="coach-heading" className="text-lg font-bold tracking-tight text-ink">AI <span className="text-gradient">Coach</span></h3>
+                <h3 id="coach-heading" className="text-lg font-bold tracking-tight text-ink">Hi, I&apos;m <span className="text-gradient">{MASCOT_NAME}</span>!</h3>
                 <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
-                  Coaching and answers from Google Gemini, based on your measurements and the annotated frames.
-                  Only these are sent to Google, never your video.
+                  Your AI running buddy. I know all your saved sessions and our earlier chats, so ask me to compare runs or track progress.
+                  I only see your measurements and annotated frames, never your video.
                 </p>
               </div>
             </div>
@@ -331,7 +332,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
               )}
               <button type="button" onClick={() => void getCoaching()} disabled={summaryLoading || !report} className="primary-button" title={report ? undefined : "Analyse a video first"}>
                 {summaryLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : state.advice && !state.fromHistory ? <RefreshCw className="h-4 w-4" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
-                {summaryLoading ? "Coaching…" : state.advice && !state.fromHistory ? "New coaching" : "Get AI coaching"}
+                {summaryLoading ? `${MASCOT_NAME} is thinking…` : state.advice && !state.fromHistory ? "New coaching" : `Coach me, ${MASCOT_NAME}`}
               </button>
             </div>
           </div>
@@ -375,19 +376,20 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
               <div className="rounded-xl border border-border/70 bg-surface/80">
                 <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2.5">
                   <MessageCircle className="h-4 w-4 text-primary" aria-hidden="true" />
-                  <h4 className="text-sm font-semibold text-ink">Ask your coach</h4>
+                  <h4 className="text-sm font-semibold text-ink">Chat with {MASCOT_NAME}</h4>
                   {historyEnabled && state.conversationId && <span className="ml-auto text-[10px] text-muted">Saved to history</span>}
                 </div>
                 <div className="max-h-[26rem] space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
                   {state.messages.length === 0 && (
                     <p className="text-xs text-muted">
                       {!canChat
-                        ? historyEnabled ? "Open a saved chat from the history panel, or analyse a video to start new coaching." : "Analyse a video to start coaching."
-                        : hasContent ? "Ask anything about your form, drills or training." : "Ask a question, or get your coaching summary first."}
+                        ? "Analyse a video to start coaching."
+                        : hasContent ? "Ask me anything about your form, drills, training or how you're progressing." : "Ask a question, or get your coaching summary first."}
                     </p>
                   )}
                   {state.messages.map((message, index) => (
-                    <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div key={index} className={`flex items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {message.role === "coach" && <Mascot size={30} className="mb-1 shrink-0" />}
                       <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                         message.role === "user" ? "bg-button-gradient text-white" : "border border-border/70 bg-surface text-body"
                       }`}>
@@ -396,9 +398,10 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                     </div>
                   ))}
                   {chatLoading && (
-                    <div className="flex justify-start">
+                    <div className="flex items-end gap-2">
+                      <Mascot size={30} mood="talking" className="mb-1 shrink-0" />
                       <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-surface px-3.5 py-2.5 text-xs text-muted">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Coach is typing…
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> {MASCOT_NAME} is typing…
                       </div>
                     </div>
                   )}
@@ -417,7 +420,7 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
                   className="flex items-end gap-2 border-t border-border/70 p-3"
                   onSubmit={(event) => { event.preventDefault(); void ask(draft); }}
                 >
-                  <label htmlFor="coach-question" className="sr-only">Ask your coach a question</label>
+                  <label htmlFor="coach-question" className="sr-only">Ask {MASCOT_NAME} a question</label>
                   <textarea
                     id="coach-question"
                     value={draft}

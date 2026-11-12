@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { createClient } from "@supabase/supabase-js";
 import {
   COACH_CHAT_SYSTEM_PROMPT,
   COACH_RESPONSE_SCHEMA,
@@ -12,6 +13,7 @@ import {
   validateCoachChatRequest,
   validateCoachRequest,
 } from "@/lib/coach";
+import { HISTORY_LIMITS, HistoryAnalysis, HistoryConversation, buildRunnerHistory } from "@/lib/coachHistory";
 
 export const runtime = "nodejs";
 
@@ -34,6 +36,35 @@ class CoachError extends Error {
 
 function error(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
+}
+
+/**
+ * Loads the signed-in runner's saved sessions and earlier chats with their own Clerk token, so
+ * Supabase row-level security still limits it to their rows. Returns "" when unavailable.
+ */
+async function loadRunnerHistory(token: string | null, excludeConversationId: string | null): Promise<string> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey || !token) return "";
+  const supabase = createClient(url, anonKey, { accessToken: async () => token });
+  const [analyses, conversations] = await Promise.all([
+    supabase
+      .from("analyses")
+      .select("id, created_at, video_name, overall_score, cadence_spm, shank_angle_deg, knee_flexion_deg, trunk_lean_deg, stride_cv_pct, symmetry_index_pct, landing_offset_torso_pct")
+      .order("created_at", { ascending: false })
+      .limit(HISTORY_LIMITS.analyses),
+    supabase
+      .from("coach_conversations")
+      .select("id, created_at, title, advice, messages")
+      .order("updated_at", { ascending: false })
+      .limit(HISTORY_LIMITS.conversations + 1),
+  ]);
+  if (analyses.error && conversations.error) return "";
+  return buildRunnerHistory(
+    (analyses.data ?? []) as HistoryAnalysis[],
+    (conversations.data ?? []) as HistoryConversation[],
+    excludeConversationId
+  );
 }
 
 async function callGemini(
@@ -77,10 +108,12 @@ export async function POST(request: Request) {
 
   // With Clerk configured, only signed-in users may use the coach (protects the free quota).
   let userKey = "local";
+  let token: string | null = null;
   if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY) {
-    const { userId } = await auth();
-    if (!userId) return error("Please sign in to use the AI coach.", 401);
-    userKey = userId;
+    const session = await auth();
+    if (!session.userId) return error("Please sign in to chat with Dash.", 401);
+    userKey = session.userId;
+    token = await session.getToken().catch(() => null);
   }
 
   let body: unknown;
@@ -101,6 +134,8 @@ export async function POST(request: Request) {
   }
   lastRequest.set(limitKey, now);
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  const openConversationId = isChat ? ((body as CoachChatRequest).conversationId ?? null) : null;
+  const history = await loadRunnerHistory(token, openConversationId).catch(() => "");
 
   try {
     if (!isChat) {
@@ -108,7 +143,7 @@ export async function POST(request: Request) {
       const text = await callGemini(apiKey, model, COACH_SYSTEM_PROMPT, [{
         role: "user",
         parts: [
-          { text: buildCoachPrompt(coachRequest) },
+          { text: history ? `${history}\n\nCURRENT SESSION:\n${buildCoachPrompt(coachRequest)}` : buildCoachPrompt(coachRequest) },
           ...coachRequest.images.map((image) => ({ inlineData: { mimeType: "image/jpeg", data: image.data } })),
         ],
       }], { temperature: 0.4, responseMimeType: "application/json", responseSchema: COACH_RESPONSE_SCHEMA });
@@ -121,8 +156,8 @@ export async function POST(request: Request) {
     // conversation, with the coach's earlier replies as model turns.
     const chat = body as CoachChatRequest;
     const contents: GeminiContent[] = [
-      { role: "user", parts: [{ text: `Here is my running analysis.\n${buildCoachChatContext(chat)}` }] },
-      { role: "model", parts: [{ text: "Thanks, I have your measurements and coaching. What would you like to know?" }] },
+      { role: "user", parts: [{ text: `${history ? `${history}\n\n` : ""}CURRENT SESSION (the one we are discussing):\n${buildCoachChatContext(chat)}` }] },
+      { role: "model", parts: [{ text: "Got it: I have this session, all your saved sessions and our earlier chats. What would you like to know?" }] },
       ...chat.messages.map((message): GeminiContent => ({
         role: message.role === "user" ? "user" : "model",
         parts: [{ text: message.text }],
