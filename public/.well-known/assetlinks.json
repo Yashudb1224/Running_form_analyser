@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.stridelab.app",
+        "sha256_cert_fingerprints": ["54:0E:21:46:38:C4:D9:23:F9:4E:CA:F4:DC:13:A9:B4:53:17:09:74:35:8F:C1:FC:6E:85:05:86:34:57:84:C2"]
+      }
+    }]
