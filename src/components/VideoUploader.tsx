@@ -1,5 +1,5 @@
-import React, { useRef, useState } from "react";
-import { Upload, Video, Camera, Ruler, Timer, Sun } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Upload, Video, Camera, Ruler, Timer, Sun, Images } from "lucide-react";
 
 interface VideoUploaderProps {
   onVideoSelected: (file: File) => void;
@@ -16,7 +16,14 @@ const filmingTips = [
 
 export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, samplingRateFps, maxAnalyzedSeconds }) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Phones and tablets get separate "record" and "gallery" buttons; desktops a single file picker.
+  const [isTouch, setIsTouch] = useState(false);
+
+  useEffect(() => {
+    setIsTouch(window.matchMedia("(pointer: coarse)").matches);
+  }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -80,7 +87,18 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
           <input
             ref={inputRef}
             type="file"
-            accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
+            accept={isTouch ? "video/*" : "video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={handleFileChange}
+          />
+          {/* capture opens the phone's camera straight away in video mode, using the rear camera. */}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="video/*"
+            capture="environment"
             className="sr-only"
             tabIndex={-1}
             aria-hidden="true"
@@ -90,12 +108,25 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, s
             <span className="absolute inset-0 animate-ping rounded-2xl bg-brand-gradient opacity-20 motion-reduce:hidden" aria-hidden="true" />
             <Upload className="relative h-7 w-7" aria-hidden="true" />
           </span>
-          <h3 className="text-xl font-semibold text-ink">Drop a running video here</h3>
-          <p className="mt-1 text-sm text-muted">MP4, MOV, AVI or WebM</p>
-          <button type="button" onClick={() => inputRef.current?.click()} className="primary-button mt-6">
-            <Video className="h-4 w-4" aria-hidden="true" />
-            Choose video
-          </button>
+          <h3 className="text-xl font-semibold text-ink">{isTouch ? "Add a running video" : "Drop a running video here"}</h3>
+          <p className="mt-1 text-sm text-muted">{isTouch ? "Record one now, or pick one you've already filmed" : "MP4, MOV, AVI or WebM"}</p>
+          {isTouch ? (
+            <div className="mt-6 grid w-full max-w-xs gap-3">
+              <button type="button" onClick={() => cameraRef.current?.click()} className="primary-button">
+                <Camera className="h-4 w-4" aria-hidden="true" />
+                Record with camera
+              </button>
+              <button type="button" onClick={() => inputRef.current?.click()} className="control-button min-h-11 justify-center">
+                <Images className="h-4 w-4" aria-hidden="true" />
+                Choose from gallery
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => inputRef.current?.click()} className="primary-button mt-6">
+              <Video className="h-4 w-4" aria-hidden="true" />
+              Choose video
+            </button>
+          )}
           <dl className="mt-10 grid w-full max-w-sm grid-cols-2 gap-4 border-t border-border pt-5 text-left">
             <div>
               <dt className="eyebrow">Sampling</dt>
