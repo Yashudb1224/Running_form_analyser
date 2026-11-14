@@ -229,21 +229,17 @@ input:focus-visible,
 }
 
 /* Dash mascot animations */
-.dash-mascot { overflow: visible; }
-.dash-mascot .dash-bounce { transform-origin: 60px 110px; animation: dash-bounce 2.4s ease-in-out infinite; }
-.dash-mascot .dash-eyes { transform-origin: 60px 70px; animation: dash-blink 4.5s infinite; }
-.dash-mascot .dash-band-tail { transform-origin: 90px 54px; animation: dash-wave 1.2s ease-in-out infinite; }
-.dash-thinking .dash-pupils { transform: translate(2px, -3px); }
-.dash-thinking .dash-think circle { animation: dash-dots 1.2s ease-in-out infinite; }
-.dash-thinking .dash-think circle:nth-child(2) { animation-delay: 0.15s; }
-.dash-thinking .dash-think circle:nth-child(3) { animation-delay: 0.3s; }
-.dash-talking .dash-mouth { transform-origin: 60px 86px; animation: dash-talk 0.35s ease-in-out infinite alternate; }
-.dash-happy .dash-bounce { animation: dash-hop 0.9s ease-in-out infinite; }
-.dash-happy .dash-arm-right { transform-origin: 93px 70px; animation: dash-wave 0.6s ease-in-out infinite; }
+.dash-mascot { transform-origin: 50% 90%; }
+.dash-idle { animation: dash-bob 2.6s ease-in-out infinite; }
+.dash-thinking { animation: dash-tilt 1.4s ease-in-out infinite; }
+.dash-talking { animation: dash-bounce 0.45s ease-in-out infinite; }
+.dash-happy { animation: dash-hop 0.9s ease-in-out infinite; }
 
-@keyframes dash-bounce { 0%, 100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-4px) scaleY(1.02); } }
-@keyframes dash-hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-9px); } 60% { transform: translateY(-9px); } }
-@keyframes dash-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
-@keyframes dash-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-12deg); } }
-@keyframes dash-dots { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-@keyframes dash-talk { from { transform: scaleY(0.6); } to { transform: scaleY(1.4); } }
+@keyframes dash-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes dash-tilt { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+@keyframes dash-bounce { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-2px) scale(1.03); } }
+@keyframes dash-hop { 0%, 100% { transform: translateY(0); } 40%, 60% { transform: translateY(-8px); } }
+@keyframes dash-wiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
+@keyframes dash-pop { from { opacity: 0; transform: translateY(6px) scale(0.92); } to { opacity: 1; transform: none; } }
+.dash-bubble { animation: dash-pop 0.35s ease-out both; }
+.dash-launcher:hover .dash-mascot { animation: dash-wiggle 0.6s ease-in-out; }

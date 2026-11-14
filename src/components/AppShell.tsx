@@ -8,9 +8,8 @@ import {
 import { ThemePreference, useTheme } from "./ThemeProvider";
 import { useAuth } from "./AuthProvider";
 import { GoogleIcon } from "./GoogleIcon";
-import { MASCOT_NAME, Mascot } from "./Mascot";
 
-export type AppView = "report" | "new" | "progress" | "trainer" | "coach" | "guide";
+export type AppView = "report" | "new" | "progress" | "trainer" | "guide";
 
 type NavIcon = (props: { active: boolean }) => React.ReactNode;
 
@@ -68,12 +67,6 @@ function SidebarContent({ view, onNavigate, reportLabel, collapsed = false }: Om
     { view: "new", label: "New analysis", icon: lucide(PlusCircle) },
     { view: "progress", label: "Progress", icon: lucide(LineChart) },
     { view: "trainer", label: "Trainer", icon: lucide(Dumbbell) },
-    {
-      view: "coach",
-      label: `Ask ${MASCOT_NAME}`,
-      icon: function MascotIcon() { return <Mascot size={22} className="-my-1 shrink-0" />; },
-      hint: collapsed ? undefined : "Your AI running buddy",
-    },
     { view: "guide", label: "Metric guide", icon: lucide(BookOpen) },
   ];
   const currentTheme = THEME_OPTIONS.find((option) => option.value === preference) ?? THEME_OPTIONS[2];

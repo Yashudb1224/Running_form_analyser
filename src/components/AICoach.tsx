@@ -313,10 +313,10 @@ export function AICoach({ report, videoName, analysisId }: { report: CompleteAna
         <div className="pointer-events-none absolute inset-0 bg-brand-soft" aria-hidden="true" />
         <div className="relative">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex gap-3">
-              <Mascot size={60} mood={summaryLoading || chatLoading ? "thinking" : state.advice ? "happy" : "idle"} className="-my-2 shrink-0" />
+            <div className="flex items-center gap-3">
+              <Mascot size={92} variant="full" mood={summaryLoading || chatLoading ? "thinking" : state.advice ? "happy" : "idle"} className="-my-2 shrink-0" />
               <div>
-                <h3 id="coach-heading" className="text-lg font-bold tracking-tight text-ink">Hi, I&apos;m <span className="text-gradient">{MASCOT_NAME}</span>!</h3>
+                <h3 id="coach-heading" className="text-xl font-bold tracking-tight text-ink">Hellooo, I&apos;m <span className="text-gradient">{MASCOT_NAME}</span>!</h3>
                 <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
                   Your AI running buddy. I know all your saved sessions and our earlier chats, so ask me to compare runs or track progress.
                   I only see your measurements and annotated frames, never your video.

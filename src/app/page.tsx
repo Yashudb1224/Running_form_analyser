@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AppShell, AppView } from "@/components/AppShell";
 import { ReportDashboard } from "@/components/ReportDashboard";
-import { MASCOT_NAME } from "@/components/Mascot";
+import { DashHello, DashLauncher } from "@/components/DashLauncher";
 import { VideoUploader } from "@/components/VideoUploader";
 import { AICoach } from "@/components/AICoach";
 import { MetricGuide } from "@/components/MetricGuide";
@@ -16,7 +16,7 @@ import { buildAnalysisQuality } from "@/lib/analysisQuality";
 import { captureEvidenceFrames } from "@/lib/evidenceFrames";
 import { correctLegSwaps } from "@/lib/legTracking";
 import { BrowserPoseEstimator, convertMediaPipeLandmarks, createUnavailableFrame } from "@/lib/poseEstimator";
-import { Loader2, AlertTriangle, Dumbbell, LineChart, Sparkles } from "lucide-react";
+import { Loader2, AlertTriangle, Dumbbell, LineChart } from "lucide-react";
 import { Trainer } from "@/components/Trainer";
 import { useAuth } from "@/components/AuthProvider";
 import { SignInPanel } from "@/components/SignInPanel";
@@ -105,6 +105,7 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [report, setReport] = useState<CompleteAnalysisReport | null>(null);
   const [view, setView] = useState<AppView>("new");
+  const [coachOpen, setCoachOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -401,7 +402,7 @@ export default function Home() {
             saveError={saveError}
             onExportPdf={() => void downloadReportPdf()}
             onNewAnalysis={() => navigate("new")}
-            onOpenCoach={() => navigate("coach")}
+            onOpenCoach={() => setCoachOpen(true)}
           />
         </div>
       )}
@@ -415,22 +416,17 @@ export default function Home() {
         </div>
       ))}
 
-      {/* The coach stays mounted so its coaching and chat survive page switches. */}
-      <div className={view === "coach" && !auth.loading ? "rise-in space-y-6 pt-6 lg:pt-8" : "hidden"}>
-        {needsSignIn ? signIn : (
-          <>
-            <PageHeading
-              icon={<Sparkles className="h-5 w-5" aria-hidden="true" />}
-              eyebrow="Your AI running buddy · powered by Google Gemini"
-              title={`Ask ${MASCOT_NAME}`}
-              text={report
-                ? `Coaching for ${videoName}, with your full history of sessions and chats.`
-                : "Ask about your progress across all saved sessions, reopen a chat, or analyse a video for new coaching."}
-            />
-            <AICoach report={report} videoName={report ? videoName : null} analysisId={savedAnalysisId} />
-          </>
-        )}
-      </div>
+      {/* Dash floats in the corner; his chat panel stays mounted so a conversation survives closing it. */}
+      {!auth.loading && (
+        <DashLauncher open={coachOpen} onOpenChange={setCoachOpen}>
+          {needsSignIn ? (
+            <div className="space-y-6">
+              <DashHello text="Hellooo! I'm Dash, your running buddy. Sign in and I'll coach you on every run!" />
+              {signIn}
+            </div>
+          ) : <AICoach report={report} videoName={report ? videoName : null} analysisId={savedAnalysisId} />}
+        </DashLauncher>
+      )}
 
       {view === "trainer" && !auth.loading && (
         <div className="rise-in space-y-6 pt-6 lg:pt-8">
@@ -440,7 +436,7 @@ export default function Home() {
             title="Trainer"
             text="Exercises picked for your weakest measures, each with an animated demonstration."
           />
-          <Trainer report={report} videoName={report ? videoName : null} onAskDash={() => navigate("coach")} />
+          <Trainer report={report} videoName={report ? videoName : null} onAskDash={() => setCoachOpen(true)} />
         </div>
       )}
 
